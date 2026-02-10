@@ -49,8 +49,8 @@ function makePointCloudMaterial(uniforms: {
     `,
     vertexColors: true,
     transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    depthTest: true,
+    depthWrite: true,
   });
 }
 
