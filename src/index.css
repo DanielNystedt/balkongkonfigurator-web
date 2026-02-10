@@ -1,10 +1,150 @@
 @import "tailwindcss";
 
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
 html, body, #root {
-  margin: 0;
-  padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
   font-family: system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: #1a1a2e;
+}
+
+/* === Sidebar styles (matching Bjälklag Konfigurator exactly) === */
+
+.sidebar {
+  font-size: 13px;
+}
+
+.sidebar h2 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+
+.section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.control {
+  margin-bottom: 10px;
+}
+
+.control label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #444;
+  margin-bottom: 3px;
+}
+
+.value {
+  font-weight: 600;
+  color: #2196F3;
+}
+
+.sidebar input[type="range"] {
+  width: 100%;
+}
+
+.sidebar select {
+  width: 100%;
+  padding: 5px;
+  font-size: 12px;
+}
+
+.sidebar input[type="text"],
+.sidebar input[type="number"],
+.sidebar textarea {
+  width: 100%;
+  padding: 5px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+.sidebar input[type="text"]:focus,
+.sidebar input[type="number"]:focus,
+.sidebar textarea:focus {
+  outline: none;
+  border-color: #2196F3;
+}
+
+.btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  margin-right: 6px;
+  margin-bottom: 6px;
+}
+
+.btn-secondary {
+  background: #666;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #e53935;
+  color: #fff;
+}
+
+.info {
+  background: #f0f7ff;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.info strong {
+  color: #1976D2;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.shortcut-info {
+  font-size: 9px;
+  color: #999;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.tool-group {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.tool-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  background: #eee;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tool-btn.active {
+  background: #2196F3;
+  color: #fff;
 }

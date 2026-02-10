@@ -1,9 +1,6 @@
 import { useEffect } from 'react';
-import { Toolbar } from './components/layout/Toolbar';
 import { StatusBar } from './components/layout/StatusBar';
 import { SplitView } from './components/layout/SplitView';
-import { ViewTabs } from './components/layout/ViewTabs';
-import { LevelsPanel } from './components/panels/LevelsPanel';
 import { useConfigStore } from './store/useConfigStore';
 
 export default function App() {
@@ -16,12 +13,10 @@ export default function App() {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (isDrawing) {
-          // Cancel drawing: clear all points
           clearGuide();
         }
       }
       if (e.key === 'Enter' && isDrawing) {
-        // Finish drawing (stop adding points)
         setIsDrawing(false);
       }
       if (e.key === 'z' && (e.ctrlKey || e.metaKey) && isDrawing) {
@@ -34,12 +29,8 @@ export default function App() {
   }, [isDrawing, setIsDrawing, undoLastPoint, clearGuide]);
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-white">
-      <Toolbar />
-      <SplitView
-        viewport={<ViewTabs />}
-        panel={<LevelsPanel />}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh' }}>
+      <SplitView />
       <StatusBar />
     </div>
   );

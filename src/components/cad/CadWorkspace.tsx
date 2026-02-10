@@ -1,10 +1,11 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { useConfigStore } from '../../store/useConfigStore';
 import { CadGuidelineRenderer } from './CadGuidelineRenderer';
+import { CadLevelOverlay } from './CadLevelOverlay';
 import { distance2D } from '../../utils/math';
 import type { Point2D } from '../../types/geometry';
 
-const INITIAL_VIEW_SIZE = 6000;
+const INITIAL_VIEW_SIZE = 6000;   // mm – initial visible width
 const HIT_RADIUS_PX = 12;
 const DRAG_THRESHOLD_PX = 4;
 
@@ -58,46 +59,130 @@ function projectOnSeg(p: Point2D, a: Point2D, b: Point2D): Point2D {
 
 // ─── Component ───────────────────────────────────────────
 
-export function CadWorkspace() {
+interface CadWorkspaceProps {
+  /** When true, SVG bg is transparent (point cloud renders behind) */
+  transparent?: boolean;
+}
+
+export function CadWorkspace({ transparent = false }: CadWorkspaceProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [viewBox, setViewBox] = useState<ViewBox>({
-    x: -INITIAL_VIEW_SIZE / 2, y: -INITIAL_VIEW_SIZE / 2,
-    w: INITIAL_VIEW_SIZE, h: INITIAL_VIEW_SIZE,
-  });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // viewBox always matches the container aspect ratio.
+  // We track "center" + "mmPerPx" (zoom level) and derive w/h from container size.
+  const centerRef = useRef<{ cx: number; cy: number }>({ cx: 0, cy: 0 });
+  const zoomRef = useRef<number>(INITIAL_VIEW_SIZE); // visible width in mm
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 800, h: 600 });
+
+  // Derived viewBox from center + zoom + container aspect ratio
+  const aspect = containerSize.w / (containerSize.h || 1);
+  const vbW = zoomRef.current;
+  const vbH = vbW / aspect;
+  const viewBox: ViewBox = {
+    x: centerRef.current.cx - vbW / 2,
+    y: centerRef.current.cy - vbH / 2,
+    w: vbW,
+    h: vbH,
+  };
+
+  // Force re-render counter (since we use refs for center/zoom)
+  const [, forceRender] = useState(0);
+  const rerender = () => forceRender((n) => n + 1);
+
   const [cursor, setCursor] = useState('default');
 
   // Mouse interaction refs
-  const panRef = useRef<{ cx: number; cy: number; vb: ViewBox } | null>(null);
+  const panRef = useRef<{ cx: number; cy: number; center: { cx: number; cy: number } } | null>(null);
   const dragRef = useRef<number | null>(null);
   const downRef = useRef<{ cx: number; cy: number } | null>(null);
   const movedRef = useRef(false);
+  const levelDragRef = useRef(false);
 
   const store = () => useConfigStore.getState();
 
-  // ─── Zoom ──────────────────────────────────────────────
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const svg = svgRef.current; if (!svg) return;
-    const mm = toMm(svg, viewBox, e.clientX, e.clientY);
-    const sy = -mm.y, f = e.deltaY > 0 ? 1.1 : 0.9;
-    setViewBox(vb => {
-      const nw = vb.w * f, nh = vb.h * f;
-      return {
-        x: mm.x - ((mm.x - vb.x) / vb.w) * nw,
-        y: sy - ((sy - vb.y) / vb.h) * nh,
-        w: nw, h: nh,
-      };
+  // ─── Track container size with ResizeObserver ─────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ w: width, h: height });
+        }
+      }
     });
-  }, [viewBox]);
+    ro.observe(el);
+    // Initial size
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      setContainerSize({ w: rect.width, h: rect.height });
+    }
+    return () => ro.disconnect();
+  }, []);
+
+  // ─── Publish viewBox to store for Three.js sync ─────
+  const setCadViewBox = useConfigStore((s) => s.setCadViewBox);
+  useEffect(() => {
+    setCadViewBox(viewBox);
+  }, [viewBox.x, viewBox.y, viewBox.w, viewBox.h, setCadViewBox]);
+
+  // ─── Zoom (native listener to allow passive:false) ─────
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      // Zoom toward cursor
+      const r = svg.getBoundingClientRect();
+      const aspect = r.width / (r.height || 1);
+      const curW = zoomRef.current;
+      const curH = curW / aspect;
+      const cx = centerRef.current.cx;
+      const cy = centerRef.current.cy;
+      const vbX = cx - curW / 2;
+      const vbY = cy - curH / 2;
+
+      // Mouse in SVG mm coords
+      const mouseX = vbX + ((e.clientX - r.left) / r.width) * curW;
+      const mouseY = vbY + ((e.clientY - r.top) / r.height) * curH;
+      const mouseMmY = -mouseY; // SVG Y → mm Y
+
+      const f = e.deltaY > 0 ? 1.1 : 0.9;
+      const newW = curW * f;
+      const newH = newW / aspect;
+
+      // Keep mouse position stable in screen space
+      const fracX = (e.clientX - r.left) / r.width;
+      const fracY = (e.clientY - r.top) / r.height;
+      const newVbX = mouseX - fracX * newW;
+      const newVbY = mouseY - fracY * newH;
+
+      zoomRef.current = newW;
+      centerRef.current = {
+        cx: newVbX + newW / 2,
+        cy: newVbY + newH / 2,
+      };
+      rerender();
+    };
+    svg.addEventListener('wheel', handler, { passive: false });
+    return () => svg.removeEventListener('wheel', handler);
+  }, []);
 
   // ─── Mouse down ────────────────────────────────────────
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     const svg = svgRef.current; if (!svg) return;
+    if (levelDragRef.current) return;
 
-    // Pan
+    // Pan (middle click or ctrl+left)
     if (e.button === 1 || (e.button === 0 && e.ctrlKey)) {
       e.preventDefault();
-      panRef.current = { cx: e.clientX, cy: e.clientY, vb: { ...viewBox } };
+      panRef.current = {
+        cx: e.clientX,
+        cy: e.clientY,
+        center: { ...centerRef.current },
+      };
       setCursor('grabbing');
       return;
     }
@@ -107,8 +192,8 @@ export function CadWorkspace() {
     movedRef.current = false;
 
     const s = store();
-    // EDIT phase: prepare vertex drag
-    if (!s.isDrawing && s.guidePoints.length >= 2) {
+    // Vertex drag — always enabled when points exist
+    if (s.guidePoints.length > 0) {
       const mm = toMm(svg, viewBox, e.clientX, e.clientY);
       const idx = hitPoint(mm, s.guidePoints, hitRadius(svg, viewBox));
       if (idx !== null) {
@@ -125,12 +210,18 @@ export function CadWorkspace() {
 
     // Pan
     if (panRef.current) {
-      const p = panRef.current, r = svg.getBoundingClientRect();
-      setViewBox({
-        ...p.vb,
-        x: p.vb.x - (e.clientX - p.cx) * (p.vb.w / r.width),
-        y: p.vb.y - (e.clientY - p.cy) * (p.vb.h / r.height),
-      });
+      const p = panRef.current;
+      const r = svg.getBoundingClientRect();
+      const aspect = r.width / (r.height || 1);
+      const curW = zoomRef.current;
+      const curH = curW / aspect;
+      const dxPx = e.clientX - p.cx;
+      const dyPx = e.clientY - p.cy;
+      centerRef.current = {
+        cx: p.center.cx - (dxPx / r.width) * curW,
+        cy: p.center.cy - (dyPx / r.height) * curH,
+      };
+      rerender();
       return;
     }
 
@@ -171,7 +262,7 @@ export function CadWorkspace() {
 
     if (e.button !== 0 || e.ctrlKey) return;
 
-    // Check it was a click (not a drag on empty space)
+    // Check it was a click (not a drag)
     if (downRef.current) {
       const dx = e.clientX - downRef.current.cx, dy = e.clientY - downRef.current.cy;
       if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
@@ -183,14 +274,14 @@ export function CadWorkspace() {
 
     const s = store();
 
-    // DRAWING phase: click = add point immediately
+    // DRAWING phase: click = add point
     if (s.isDrawing) {
       const mm = toMm(svg, viewBox, e.clientX, e.clientY);
       s.addPoint(mm);
       return;
     }
 
-    // Start new guideline (only if no points exist)
+    // Start new guideline
     if (s.activeMode === 'draw-guide' && s.guidePoints.length === 0) {
       const mm = toMm(svg, viewBox, e.clientX, e.clientY);
       s.setIsDrawing(true);
@@ -199,7 +290,12 @@ export function CadWorkspace() {
       return;
     }
 
-    // EDIT phase: click on empty space → nothing
+    // EDIT phase: click on segment → select
+    if (s.guidePoints.length >= 2) {
+      const mm = toMm(svg, viewBox, e.clientX, e.clientY);
+      const si = hitSegment(mm, s.guidePoints, hitRadius(svg, viewBox));
+      s.setSelectedSegmentIndex(si);
+    }
   }, [viewBox]);
 
   // ─── Double click ──────────────────────────────────────
@@ -209,25 +305,18 @@ export function CadWorkspace() {
     const s = store();
     const mm = toMm(svg, viewBox, e.clientX, e.clientY);
 
-    // DRAWING: the 2 mouseups before dblclick added 2 points at same spot.
-    // Remove the duplicate (second one), keep the first. Then finish.
     if (s.isDrawing) {
-      if (s.guidePoints.length >= 2) {
-        s.undoLastPoint(); // remove duplicate
-      }
+      if (s.guidePoints.length >= 2) s.undoLastPoint();
       s.setIsDrawing(false);
       setCursor('default');
       return;
     }
 
-    // EDIT: dblclick on vertex → remove
     const pts = s.guidePoints;
     if (pts.length > 0) {
       const r = hitRadius(svg, viewBox);
       const pi = hitPoint(mm, pts, r);
       if (pi !== null) { s.removePoint(pi); return; }
-
-      // EDIT: dblclick on segment → insert vertex
       const si = hitSegment(mm, pts, r);
       if (si !== null) {
         s.insertPointOnSegment(si, projectOnSeg(mm, pts[si], pts[si + 1]));
@@ -253,27 +342,51 @@ export function CadWorkspace() {
   // Sync cursor with drawing state
   const isDrawing = useConfigStore((s) => s.isDrawing);
   useEffect(() => {
-    if (!dragRef.current && !panRef.current) {
+    if (!dragRef.current && !panRef.current && !levelDragRef.current) {
       setCursor(isDrawing ? 'crosshair' : 'default');
     }
   }, [isDrawing]);
 
+  // Level drag blocking
+  const onLevelDragStart = useCallback(() => {
+    levelDragRef.current = true;
+    setCursor('ns-resize');
+  }, []);
+  const onLevelDragEnd = useCallback(() => {
+    levelDragRef.current = false;
+    setCursor('default');
+  }, []);
+
+  const activeMode = useConfigStore((s) => s.activeMode);
+
   return (
-    <svg
-      ref={svgRef}
-      className="w-full h-full bg-gray-950"
-      viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-      onWheel={onWheel}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      style={{ cursor }}
-    >
-      <CadGrid viewBox={viewBox} />
-      <CadGuidelineRenderer viewBox={viewBox} />
-    </svg>
+    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
+      <svg
+        ref={svgRef}
+        width={containerSize.w}
+        height={containerSize.h}
+        viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
+        preserveAspectRatio="none"
+        className={transparent ? '' : 'bg-[#0a0f1a]'}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
+        style={{ cursor, display: 'block' }}
+      >
+        {!transparent && <CadGrid viewBox={viewBox} />}
+        <CadGuidelineRenderer viewBox={viewBox} />
+        {activeMode === 'levels' && (
+          <CadLevelOverlay
+            viewBox={viewBox}
+            svgRef={svgRef}
+            onDragStart={onLevelDragStart}
+            onDragEnd={onLevelDragEnd}
+          />
+        )}
+      </svg>
+    </div>
   );
 }
 
@@ -290,12 +403,12 @@ function CadGrid({ viewBox }: { viewBox: ViewBox }) {
   for (let x = sx; x <= ex; x += gs) {
     const m = Math.round(x / gs) % mj === 0;
     lines.push(<line key={k++} x1={x} y1={viewBox.y} x2={x} y2={ey}
-      stroke={m ? '#374151' : '#1f2937'} strokeWidth={viewBox.w * (m ? 0.0005 : 0.0003)} />);
+      stroke={m ? '#1e293b' : '#131b2e'} strokeWidth={viewBox.w * (m ? 0.0005 : 0.0003)} />);
   }
   for (let y = sy; y <= ey; y += gs) {
     const m = Math.round(y / gs) % mj === 0;
     lines.push(<line key={k++} x1={viewBox.x} y1={y} x2={ex} y2={y}
-      stroke={m ? '#374151' : '#1f2937'} strokeWidth={viewBox.w * (m ? 0.0005 : 0.0003)} />);
+      stroke={m ? '#1e293b' : '#131b2e'} strokeWidth={viewBox.w * (m ? 0.0005 : 0.0003)} />);
   }
   const aw = viewBox.w * 0.001;
   return (

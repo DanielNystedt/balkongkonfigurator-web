@@ -2,12 +2,32 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { LevelName, LevelsConfig } from '../types/levels';
 import type { Point2D } from '../types/geometry';
-import { DEFAULT_LEVELS, GUIDE_OFFSET_DISTANCE, GUIDE_START_INSET, GUIDE_END_INSET } from '../utils/constants';
+import type { ProjectConfig } from '../types/project';
+import type { ProfileConfig, BarlinaType, BottenprofilType, BrostningsramType } from '../types/profile';
+import type { Panel, OpeningDirection, LockSymbol } from '../types/panel';
+import type { EdgeConfig } from '../types/edge';
+import {
+  DEFAULT_LEVELS,
+  GUIDE_OFFSET_DISTANCE,
+  GUIDE_START_INSET,
+  GUIDE_END_INSET,
+  DEFAULT_PROJECT_CONFIG,
+  DEFAULT_PROFILE_CONFIG,
+  DEFAULT_FRAME_WIDTH_SETTINGS,
+  DEFAULT_EXPANDED_SECTIONS,
+} from '../utils/constants';
 import { distance2D, degToRad, radToDeg } from '../utils/math';
 import { angleBetweenSegments, calculateOffsetPoints } from '../engine/geometry/offsetChain';
+import {
+  computeEdgeData,
+  autoGeneratePanelsForEdge,
+  recalcPanelOffsets,
+  isConnectedToWall,
+  type ComputedEdgeData,
+} from '../engine/calculations/edgeCalculations';
 
 export type ActiveMode = 'select' | 'draw-guide' | 'levels';
-export type ActiveView = '2d' | '3d';
+export type ActiveView = '2d' | '3d' | '2d3d';
 
 export interface SegmentInfo {
   start: Point2D;
@@ -22,6 +42,12 @@ export interface AngleInfo {
   index: number; // index of vertex point
 }
 
+export interface FrameWidthSettings {
+  maxWidthGlass: number;
+  maxWidthCovered: number;
+  maxWidthWall: number;
+}
+
 // ─── Angle snapping ───────────────────────────────────────
 const SNAP_THRESHOLD_DEG = 5;
 const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
@@ -29,9 +55,9 @@ const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
 export function applySnap(
   target: Point2D,
   origin: Point2D | null,
-  snapEnabled: boolean,
+  snapAngle: boolean,
 ): Point2D {
-  if (!snapEnabled || !origin) return target;
+  if (!snapAngle || !origin) return target;
 
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
@@ -69,12 +95,15 @@ interface ConfigState {
   levels: LevelsConfig;
   setLevelZ: (name: LevelName, z: number) => void;
   setLevelVisible: (name: LevelName, visible: boolean) => void;
+  levelEditMode: boolean;
+  setLevelEditMode: (v: boolean) => void;
 
   // Guideline polyline — ONE connected chain of points
   guidePoints: Point2D[];
   previewPoint: Point2D | null;
   isDrawing: boolean;
   snapEnabled: boolean;
+  snapAngle: boolean;
 
   // Guideline actions
   addPoint: (pt: Point2D) => void;
@@ -88,6 +117,7 @@ interface ConfigState {
   undoLastPoint: () => void;
   clearGuide: () => void;
   toggleSnap: () => void;
+  toggleSnapAngle: () => void;
 
   // Computed
   getSegments: () => SegmentInfo[];
@@ -99,6 +129,135 @@ interface ConfigState {
   setActiveMode: (mode: ActiveMode) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
+
+  // ─── Project config ───────────────────────────────────────
+  projectConfig: ProjectConfig;
+  setProjectField: <K extends keyof ProjectConfig>(key: K, value: ProjectConfig[K]) => void;
+
+  // ─── Profile config ───────────────────────────────────────
+  profileConfig: ProfileConfig;
+  setProfileField: <K extends keyof ProfileConfig>(key: K, value: ProfileConfig[K]) => void;
+
+  // ─── Frame width settings ─────────────────────────────────
+  frameWidthSettings: FrameWidthSettings;
+  setFrameWidthField: <K extends keyof FrameWidthSettings>(key: K, value: FrameWidthSettings[K]) => void;
+
+  // ─── Segment selection ─────────────────────────────────────
+  selectedSegmentIndex: number | null;
+  setSelectedSegmentIndex: (index: number | null) => void;
+
+  // ─── Per-edge config ───────────────────────────────────────
+  edgeConfigs: EdgeConfig[];
+  setEdgeWallOrGlazing: (segIndex: number, status: 'wall' | 'glazing') => void;
+  addPanel: (segIndex: number) => void;
+  removePanel: (segIndex: number, panelIndex: number) => void;
+  updatePanelField: (segIndex: number, panelIndex: number, field: keyof Panel, value: string | number) => void;
+  autoGeneratePanels: (segIndex: number) => void;
+
+  // ─── Computed edge data ─────────────────────────────────────
+  getEdgeData: (segIndex: number) => ComputedEdgeData | null;
+
+  // ─── Accordion UI ──────────────────────────────────────────
+  expandedSections: Record<string, boolean>;
+  toggleSection: (id: string) => void;
+
+  // ─── Point cloud ──────────────────────────────────────────
+  pointCloudEnabled: boolean;
+  setPointCloudEnabled: (v: boolean) => void;
+  pointCloudClipY: number;      // meters (Three.js Y axis)
+  setPointCloudClipY: (v: number) => void;
+  pointCloudBrightness: number; // 0.1 – 3.0
+  setPointCloudBrightness: (v: number) => void;
+  pointCloudPointSize: number;  // 0.5 – 5.0
+  setPointCloudPointSize: (v: number) => void;
+  pointCloudFile: string;
+  setPointCloudFile: (v: string) => void;
+  pointCloudOriginY: number; // meters — which clip-Y maps to z=0 (botten)
+  setPointCloudOriginY: (v: number) => void;
+  pointCloudBoundsY: [number, number]; // [min, max] in raw meters
+  setPointCloudBoundsY: (min: number, max: number) => void;
+  /** Set level z from current clipY, auto-adjusting so botten=0 */
+  setLevelFromClip: (name: LevelName) => void;
+  /** Move clip plane to a level's position */
+  setClipToLevel: (name: LevelName) => void;
+
+  // ─── 2D HUD toggles ─────────────────────────────────────
+  showLevels2D: boolean;
+  setShowLevels2D: (v: boolean) => void;
+
+  // ─── 2D viewBox (shared between SVG and Three.js) ──────
+  cadViewBox: { x: number; y: number; w: number; h: number };
+  setCadViewBox: (vb: { x: number; y: number; w: number; h: number }) => void;
+}
+
+// ─── Helper: resize segment geometry to match total panel module length ──
+function resizeSegmentToFitPanels(state: ConfigState, segIndex: number) {
+  const pts = state.guidePoints;
+  if (segIndex < 0 || segIndex >= pts.length - 1) return;
+  const edge = state.edgeConfigs[segIndex];
+  if (!edge || edge.panels.length === 0) return;
+
+  const totalModule = edge.panels.reduce(
+    (sum, p) => sum + p.length + p.offsetLeft + p.offsetRight,
+    0,
+  );
+  if (totalModule <= 0) return;
+
+  const s = pts[segIndex];
+  const e = pts[segIndex + 1];
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  const currentLen = Math.sqrt(dx * dx + dy * dy);
+  if (currentLen < 1e-10) return;
+
+  const scale = totalModule / currentLen;
+  pts[segIndex + 1] = {
+    x: s.x + dx * scale,
+    y: s.y + dy * scale,
+  };
+}
+
+// ─── Helper: auto-generate panels for a single segment ──
+function autoGenForSegment(state: ConfigState, i: number) {
+  const pts = state.guidePoints;
+  if (i < 0 || i >= pts.length - 1) return;
+  const edge = state.edgeConfigs[i];
+  if (!edge || edge.wallOrGlazingStatus === 'wall') return;
+  if (edge.panels.length > 0) return; // already has panels
+
+  const s = pts[i];
+  const e = pts[i + 1];
+  const edgeLength = Math.sqrt((e.x - s.x) ** 2 + (e.y - s.y) ** 2);
+  if (edgeLength < 50) return; // too short
+
+  let startAngle = 0;
+  let endAngle = 0;
+  if (i > 0) startAngle = angleBetweenSegments(pts[i - 1], pts[i], pts[i + 1]);
+  if (i + 2 < pts.length) endAngle = angleBetweenSegments(pts[i], pts[i + 1], pts[i + 2]);
+
+  const startWall = isConnectedToWall(state.edgeConfigs, i, 'start');
+  const endWall = isConnectedToWall(state.edgeConfigs, i, 'end');
+
+  edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+}
+
+// ─── Helper: ensure edgeConfigs array matches segment count ──
+function syncEdgeConfigs(state: ConfigState) {
+  const segCount = state.guidePoints.length > 1 ? state.guidePoints.length - 1 : 0;
+  while (state.edgeConfigs.length < segCount) {
+    state.edgeConfigs.push({ wallOrGlazingStatus: 'glazing', panels: [] });
+  }
+  if (state.edgeConfigs.length > segCount) {
+    state.edgeConfigs.length = segCount;
+  }
+  // Clamp selection
+  if (state.selectedSegmentIndex !== null && state.selectedSegmentIndex >= segCount) {
+    state.selectedSegmentIndex = segCount > 0 ? segCount - 1 : null;
+  }
+  // Auto-generate panels for any edge that doesn't have them yet
+  for (let i = 0; i < segCount; i++) {
+    autoGenForSegment(state, i);
+  }
 }
 
 export const useConfigStore = create<ConfigState>()(
@@ -122,25 +281,51 @@ export const useConfigStore = create<ConfigState>()(
         state.levels.levels[name].visible = visible;
       }),
 
+    levelEditMode: false,
+    setLevelEditMode: (v) =>
+      set((state) => {
+        state.levelEditMode = v;
+      }),
+
     // Guideline polyline
     guidePoints: [],
     previewPoint: null,
     isDrawing: false,
     snapEnabled: true,
+    snapAngle: true,
 
     addPoint: (pt) =>
       set((state) => {
         const origin = state.guidePoints.length > 0
           ? state.guidePoints[state.guidePoints.length - 1]
           : null;
-        const snapped = applySnap(pt, origin, state.snapEnabled);
+        const snapped = applySnap(pt, origin, state.snapAngle);
         state.guidePoints.push(snapped);
+        syncEdgeConfigs(state);
       }),
 
     movePoint: (index, pt) =>
       set((state) => {
         if (index >= 0 && index < state.guidePoints.length) {
           state.guidePoints[index] = pt;
+          // Regenerate panels for affected segments
+          const segCount = state.guidePoints.length - 1;
+          // Segment before this point
+          if (index > 0 && index - 1 < segCount) {
+            const edge = state.edgeConfigs[index - 1];
+            if (edge && edge.wallOrGlazingStatus === 'glazing') {
+              edge.panels = []; // clear so autoGen kicks in
+              autoGenForSegment(state, index - 1);
+            }
+          }
+          // Segment after this point
+          if (index < segCount) {
+            const edge = state.edgeConfigs[index];
+            if (edge && edge.wallOrGlazingStatus === 'glazing') {
+              edge.panels = [];
+              autoGenForSegment(state, index);
+            }
+          }
         }
       }),
 
@@ -148,6 +333,7 @@ export const useConfigStore = create<ConfigState>()(
       set((state) => {
         if (state.guidePoints.length > 2 && index >= 0 && index < state.guidePoints.length) {
           state.guidePoints.splice(index, 1);
+          syncEdgeConfigs(state);
         }
       }),
 
@@ -155,6 +341,13 @@ export const useConfigStore = create<ConfigState>()(
       set((state) => {
         if (segmentIndex >= 0 && segmentIndex < state.guidePoints.length - 1) {
           state.guidePoints.splice(segmentIndex + 1, 0, pt);
+          // Insert a new edge config after the split segment
+          const oldConfig = state.edgeConfigs[segmentIndex];
+          state.edgeConfigs.splice(segmentIndex + 1, 0, {
+            wallOrGlazingStatus: oldConfig?.wallOrGlazingStatus ?? 'glazing',
+            panels: [],
+          });
+          syncEdgeConfigs(state);
         }
       }),
 
@@ -183,12 +376,10 @@ export const useConfigStore = create<ConfigState>()(
         const curr = pts[vertexIndex];
         const next = pts[vertexIndex + 1];
 
-        // Incoming direction
         const inDx = curr.x - prev.x;
         const inDy = curr.y - prev.y;
         const inAngle = Math.atan2(inDy, inDx);
 
-        // Compute new outgoing direction
         const newAngleRad = newAngle * (Math.PI / 180);
         const outAngle = inAngle + Math.PI - newAngleRad;
 
@@ -205,7 +396,7 @@ export const useConfigStore = create<ConfigState>()(
           const origin = state.guidePoints.length > 0
             ? state.guidePoints[state.guidePoints.length - 1]
             : null;
-          state.previewPoint = pt ? applySnap(pt, origin, state.snapEnabled) : null;
+          state.previewPoint = pt ? applySnap(pt, origin, state.snapAngle) : null;
         } else {
           state.previewPoint = null;
         }
@@ -226,6 +417,7 @@ export const useConfigStore = create<ConfigState>()(
           state.isDrawing = false;
           state.previewPoint = null;
         }
+        syncEdgeConfigs(state);
       }),
 
     clearGuide: () =>
@@ -233,11 +425,18 @@ export const useConfigStore = create<ConfigState>()(
         state.guidePoints = [];
         state.isDrawing = false;
         state.previewPoint = null;
+        state.edgeConfigs = [];
+        state.selectedSegmentIndex = null;
       }),
 
     toggleSnap: () =>
       set((state) => {
         state.snapEnabled = !state.snapEnabled;
+      }),
+
+    toggleSnapAngle: () =>
+      set((state) => {
+        state.snapAngle = !state.snapAngle;
       }),
 
     // Computed
@@ -276,17 +475,240 @@ export const useConfigStore = create<ConfigState>()(
     setActiveMode: (mode) =>
       set((state) => {
         state.activeMode = mode;
-        // Stop drawing when switching away from draw mode
         if (mode !== 'draw-guide') {
           state.isDrawing = false;
           state.previewPoint = null;
         }
       }),
 
-    activeView: '2d',
+    activeView: '2d3d',
     setActiveView: (view) =>
       set((state) => {
         state.activeView = view;
+      }),
+
+    // ─── Project config ───────────────────────────────────────
+    projectConfig: { ...DEFAULT_PROJECT_CONFIG },
+    setProjectField: (key, value) =>
+      set((state) => {
+        (state.projectConfig as Record<string, unknown>)[key] = value;
+      }),
+
+    // ─── Profile config ───────────────────────────────────────
+    profileConfig: { ...DEFAULT_PROFILE_CONFIG },
+    setProfileField: (key, value) =>
+      set((state) => {
+        (state.profileConfig as Record<string, unknown>)[key] = value;
+      }),
+
+    // ─── Frame width settings ─────────────────────────────────
+    frameWidthSettings: { ...DEFAULT_FRAME_WIDTH_SETTINGS },
+    setFrameWidthField: (key, value) =>
+      set((state) => {
+        state.frameWidthSettings[key] = value;
+      }),
+
+    // ─── Segment selection ─────────────────────────────────────
+    selectedSegmentIndex: null,
+    setSelectedSegmentIndex: (index) => {
+      set((state) => {
+        state.selectedSegmentIndex = index;
+        // Auto-expand segment + panels sections
+        if (index !== null) {
+          state.expandedSections.segment = true;
+          state.expandedSections.panels = true;
+          syncEdgeConfigs(state);
+        }
+      });
+      // Auto-generate panels if edge is glazing and has no panels
+      if (index !== null) {
+        const s = get();
+        const edge = s.edgeConfigs[index];
+        if (edge && edge.wallOrGlazingStatus === 'glazing' && edge.panels.length === 0) {
+          s.autoGeneratePanels(index);
+        }
+      }
+    },
+
+    // ─── Per-edge config ───────────────────────────────────────
+    edgeConfigs: [],
+
+    setEdgeWallOrGlazing: (segIndex, status) =>
+      set((state) => {
+        syncEdgeConfigs(state);
+        if (segIndex >= 0 && segIndex < state.edgeConfigs.length) {
+          state.edgeConfigs[segIndex].wallOrGlazingStatus = status;
+          if (status === 'wall') {
+            state.edgeConfigs[segIndex].panels = [];
+          }
+        }
+      }),
+
+    addPanel: (segIndex) =>
+      set((state) => {
+        syncEdgeConfigs(state);
+        if (segIndex >= 0 && segIndex < state.edgeConfigs.length) {
+          const panels = state.edgeConfigs[segIndex].panels;
+          panels.push({
+            name: `${panels.length + 1}`,
+            length: 500,
+            opening: '>' as OpeningDirection,
+            lock: '-' as LockSymbol,
+            offsetLeft: 0,
+            offsetRight: 0,
+          });
+          resizeSegmentToFitPanels(state, segIndex);
+        }
+      }),
+
+    removePanel: (segIndex, panelIndex) =>
+      set((state) => {
+        syncEdgeConfigs(state);
+        if (segIndex >= 0 && segIndex < state.edgeConfigs.length) {
+          const panels = state.edgeConfigs[segIndex].panels;
+          if (panelIndex >= 0 && panelIndex < panels.length) {
+            panels.splice(panelIndex, 1);
+            panels.forEach((p, i) => { p.name = `${i + 1}`; });
+          }
+          resizeSegmentToFitPanels(state, segIndex);
+        }
+      }),
+
+    updatePanelField: (segIndex, panelIndex, field, value) =>
+      set((state) => {
+        syncEdgeConfigs(state);
+        if (segIndex >= 0 && segIndex < state.edgeConfigs.length) {
+          const panels = state.edgeConfigs[segIndex].panels;
+          if (panelIndex >= 0 && panelIndex < panels.length) {
+            (panels[panelIndex] as Record<string, unknown>)[field] = value;
+          }
+          // Resize segment geometry when panel width changes
+          if (field === 'length') {
+            resizeSegmentToFitPanels(state, segIndex);
+          }
+        }
+      }),
+
+    autoGeneratePanels: (segIndex) =>
+      set((state) => {
+        syncEdgeConfigs(state);
+        const pts = state.guidePoints;
+        if (segIndex < 0 || segIndex >= pts.length - 1) return;
+        const edge = state.edgeConfigs[segIndex];
+        if (!edge || edge.wallOrGlazingStatus === 'wall') return;
+
+        const start = pts[segIndex];
+        const end = pts[segIndex + 1];
+        const edgeLength = Math.sqrt(
+          (end.x - start.x) ** 2 + (end.y - start.y) ** 2,
+        );
+
+        // Calculate angles
+        let startAngle = 0;
+        let endAngle = 0;
+        if (segIndex > 0) {
+          startAngle = angleBetweenSegments(pts[segIndex - 1], pts[segIndex], pts[segIndex + 1]);
+        }
+        if (segIndex + 2 < pts.length) {
+          endAngle = angleBetweenSegments(pts[segIndex], pts[segIndex + 1], pts[segIndex + 2]);
+        }
+
+        // Wall connections
+        const startWall = isConnectedToWall(state.edgeConfigs, segIndex, 'start');
+        const endWall = isConnectedToWall(state.edgeConfigs, segIndex, 'end');
+
+        // Use real auto-generation logic
+        edge.panels = autoGeneratePanelsForEdge(
+          edgeLength,
+          startAngle,
+          endAngle,
+          startWall,
+          endWall,
+        );
+        resizeSegmentToFitPanels(state, segIndex);
+      }),
+
+    // ─── Computed edge data ─────────────────────────────────────
+    getEdgeData: (segIndex: number) => {
+      const state = get();
+      // Frame height = Mellanstycke - Understycke
+      const frameHeight =
+        state.levels.levels.Mellanstycke.zPosition -
+        state.levels.levels.Understycke.zPosition;
+      return computeEdgeData(
+        state.guidePoints,
+        state.edgeConfigs,
+        segIndex,
+        frameHeight,
+      );
+    },
+
+    // ─── Point cloud ──────────────────────────────────────────
+    pointCloudEnabled: true,
+    setPointCloudEnabled: (v) =>
+      set((state) => { state.pointCloudEnabled = v; }),
+    pointCloudClipY: 2.0,
+    setPointCloudClipY: (v) =>
+      set((state) => { state.pointCloudClipY = v; }),
+    pointCloudBrightness: 1.0,
+    setPointCloudBrightness: (v) =>
+      set((state) => { state.pointCloudBrightness = v; }),
+    pointCloudPointSize: 1.0,
+    setPointCloudPointSize: (v) =>
+      set((state) => { state.pointCloudPointSize = v; }),
+    pointCloudFile: '/balkong.ply',
+    setPointCloudFile: (v) =>
+      set((state) => { state.pointCloudFile = v; }),
+    pointCloudOriginY: 0,
+    setPointCloudOriginY: (v) =>
+      set((state) => { state.pointCloudOriginY = v; }),
+    pointCloudBoundsY: [-3, 3] as [number, number],
+    setPointCloudBoundsY: (min, max) =>
+      set((state) => { state.pointCloudBoundsY = [min, max]; }),
+    setLevelFromClip: (name) =>
+      set((state) => {
+        const clipYMeters = state.pointCloudClipY;
+        if (name === 'Understycke') {
+          // Botten → alltid 0. Sätt origin till aktuell clipY.
+          const oldOrigin = state.pointCloudOriginY;
+          const newOrigin = clipYMeters;
+          // Justera andra nivåer med skillnaden
+          const deltaMs = newOrigin - oldOrigin;
+          const deltaMm = Math.round(deltaMs * 1000);
+          state.levels.levels.Understycke.zPosition = 0;
+          state.levels.levels.Mellanstycke.zPosition -= deltaMm;
+          state.levels.levels.Overstycke.zPosition -= deltaMm;
+          state.pointCloudOriginY = newOrigin;
+          // Reset clip slider to origin (= 0 mm relativt)
+          state.pointCloudClipY = newOrigin;
+        } else {
+          // Mellan/Överstycke → beräkna mm relativt origin
+          const mm = Math.round((clipYMeters - state.pointCloudOriginY) * 1000);
+          state.levels.levels[name].zPosition = mm;
+        }
+      }),
+    setClipToLevel: (name) =>
+      set((state) => {
+        // Nivåns z i mm → konvertera till raw meters (+ originY)
+        const zMm = state.levels.levels[name].zPosition;
+        state.pointCloudClipY = state.pointCloudOriginY + zMm / 1000;
+      }),
+
+    // ─── 2D HUD toggles ─────────────────────────────────────
+    showLevels2D: false,
+    setShowLevels2D: (v) =>
+      set((state) => { state.showLevels2D = v; }),
+
+    // ─── 2D viewBox (shared between SVG and Three.js) ──────
+    cadViewBox: { x: -3000, y: -3000, w: 6000, h: 6000 },
+    setCadViewBox: (vb) =>
+      set((state) => { state.cadViewBox = vb; }),
+
+    // ─── Accordion UI ──────────────────────────────────────────
+    expandedSections: { ...DEFAULT_EXPANDED_SECTIONS },
+    toggleSection: (id) =>
+      set((state) => {
+        state.expandedSections[id] = !state.expandedSections[id];
       }),
   })),
 );

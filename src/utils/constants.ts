@@ -33,9 +33,15 @@ export const MITER_DISTANCE_OVERHALLARE = -37.1;
 export const MITER_DISTANCE_COVERPROFILE = -88.09;
 export const COVER_PROFILE_WALL_OFFSET = 54;
 
-// Panel division — 030_Config_glazing.rb
+// Panel division — 030_Config_glazing.rb / 275_Multi_Guide_HTML.rb
 export const MAX_PANEL_WIDTH = 700; // mm
-export const MIDDLE_PANEL_OFFSET = 2.0; // mm
+export const MIN_PANEL_WIDTH = 430; // mm — minimum standard size
+export const PANEL_STEP = 30; // mm — increment between standard sizes
+export const STANDARD_PANEL_SIZES = [430, 460, 490, 520, 550, 580, 610, 640, 670, 700]; // mm
+export const FREE_WIDTH_THRESHOLD = 400; // mm — below this average, use free width
+export const COMBO_TOLERANCE = 5.0; // mm — panels can exceed available by up to this
+export const MIDDLE_PANEL_OFFSET = 2.0; // mm — normal meeting lock offset per side
+export const PASSRUTA_PANEL_OFFSET = 6.0; // mm — variable end lock offset (fixed glass)
 
 // Default offsets — 030_Config_glazing.rb
 export const DEFAULT_OFFSET_ANGLE_ZERO = 46.5; // mm
@@ -63,3 +69,43 @@ export const DEFAULT_LEVELS = {
   Mellanstycke: 1000,
   Overstycke: 2100,
 } as const;
+
+// Default project config
+export const DEFAULT_PROJECT_CONFIG = {
+  guid: null as string | null,
+  ordernamn: '',
+  brfNamn: '',
+  balkongtyp: '',
+  instruktionTillProduktion: '',
+  balkong: '',
+  glastyp: 'Kristall' as const,
+  glasuppdelning: '',
+};
+
+// Default profile config
+export const DEFAULT_PROFILE_CONFIG = {
+  isHelinglasning: false,
+  barlinaType: 'Ingen' as const,
+  bottenprofilType: 'Ingen' as const,
+  vaggEnabled: false,
+  brostningEnabled: false,
+  brostningsramType: 'Vit Panel' as const,
+};
+
+// Default frame width settings (mm)
+export const DEFAULT_FRAME_WIDTH_SETTINGS = {
+  maxWidthGlass: 1200,
+  maxWidthCovered: 1700,
+  maxWidthWall: 2000,
+};
+
+// Default accordion section states
+export const DEFAULT_EXPANDED_SECTIONS: Record<string, boolean> = {
+  project: false,
+  profile: true,
+  levels: true,
+  frameWidth: false,
+  segment: true,
+  panels: true,
+  pointcloud: true,
+};

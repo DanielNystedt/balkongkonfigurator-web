@@ -4,14 +4,16 @@ import { Grid } from './Grid';
 import { LevelPlane } from './LevelPlane';
 import { GroundPlane } from './GroundPlane';
 import { GuidelineDrawing } from './GuidelineDrawing';
+import { PointCloudViewer } from './PointCloudViewer';
 import { useConfigStore } from '../../store/useConfigStore';
 
 export function ViewportCanvas() {
   const levels = useConfigStore((s) => s.levels.levels);
+  const showLevels = useConfigStore((s) => s.showLevels2D);
 
   return (
     <Canvas
-      camera={{ position: [8, 6, 8], fov: 45, near: 0.1, far: 100 }}
+      camera={{ position: [0, 5, 0], fov: 60, near: 0.1, far: 1000 }}
       style={{
         background: '#1a1a2e',
       }}
@@ -19,17 +21,18 @@ export function ViewportCanvas() {
       <ambientLight intensity={0.6} />
       <directionalLight position={[10, 10, 5]} intensity={0.8} />
       <Grid />
-      {Object.values(levels).map((level) => (
+      {showLevels && Object.values(levels).map((level) => (
         <LevelPlane key={level.name} level={level} />
       ))}
       <GroundPlane />
       <GuidelineDrawing />
+      <PointCloudViewer />
       <OrbitControls
         makeDefault
         enableDamping
         dampingFactor={0.1}
-        minDistance={1}
-        maxDistance={50}
+        minDistance={0.5}
+        maxDistance={100}
       />
     </Canvas>
   );
