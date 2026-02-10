@@ -305,8 +305,8 @@ function DrawingInteraction() {
       if (!mm) return;
 
       if (s.isDrawing) {
-        // Add the final point where user double-clicked, then finish
-        s.addPoint(mm);
+        // pointerup already added the point from the first click,
+        // so just finish drawing — don't add another point
         s.setIsDrawing(false);
         return;
       }

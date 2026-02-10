@@ -4,16 +4,15 @@ import * as THREE from 'three';
 import { useConfigStore } from '../../store/useConfigStore';
 import { loadPly, getPlyGeometry, onPlyProgress } from '../../utils/plyCache';
 
+const MAX_GUIDE_PLANES = 20;
+
 /**
- * Custom ShaderMaterial that clips the point cloud at a Y plane,
- * shows a red slice-line near the clip plane, and adjusts brightness.
- * Mirrors the experiment's Master.js shader exactly.
+ * Custom ShaderMaterial that:
+ * 1. Clips the point cloud at a Y plane (existing)
+ * 2. Shows a red slice-line near the clip plane (existing)
+ * 3. Highlights points near vertical guide segments in red (bounded to segment extent)
  */
-function makePointCloudMaterial(uniforms: {
-  u_clipY: THREE.IUniform<number>;
-  u_pointSize: THREE.IUniform<number>;
-  u_brightness: THREE.IUniform<number>;
-}) {
+function makePointCloudMaterial(uniforms: Record<string, THREE.IUniform>) {
   return new THREE.ShaderMaterial({
     uniforms,
     vertexShader: /* glsl */ `
@@ -33,18 +32,50 @@ function makePointCloudMaterial(uniforms: {
     fragmentShader: /* glsl */ `
       uniform float u_clipY;
       uniform float u_brightness;
+      uniform int u_guideSegCount;
+      uniform vec2 u_guideSegA[${MAX_GUIDE_PLANES}];
+      uniform vec2 u_guideSegB[${MAX_GUIDE_PLANES}];
+      uniform float u_guidePlaneYMin;
+      uniform float u_guidePlaneYMax;
+      uniform float u_showGuidePlanes;
       varying vec3 vColor;
       varying vec3 vWorldPos;
 
       void main() {
         if (vWorldPos.y > u_clipY) discard;
-        float dist = u_clipY - vWorldPos.y;
+        float clipDist = u_clipY - vWorldPos.y;
         vec3 finalColor = vColor * u_brightness;
-        if (dist < 0.002) {
+
+        // Clip plane red highlight
+        if (clipDist < 0.002) {
           gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-        } else {
-          gl_FragColor = vec4(finalColor, 1.0);
+          return;
         }
+
+        // Guide segment proximity highlight (bounded to segment endpoints)
+        if (u_showGuidePlanes > 0.5
+            && vWorldPos.y >= u_guidePlaneYMin
+            && vWorldPos.y <= u_guidePlaneYMax) {
+          vec2 p = vec2(vWorldPos.x, vWorldPos.z);
+          for (int i = 0; i < ${MAX_GUIDE_PLANES}; i++) {
+            if (i >= u_guideSegCount) break;
+            vec2 a = u_guideSegA[i];
+            vec2 b = u_guideSegB[i];
+            vec2 ab = b - a;
+            vec2 ap = p - a;
+            float lenSq = dot(ab, ab);
+            // Project point onto segment, clamp t to [0,1]
+            float t = clamp(dot(ap, ab) / lenSq, 0.0, 1.0);
+            vec2 closest = a + t * ab;
+            float d = length(p - closest);
+            if (d < 0.003) {
+              gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+              return;
+            }
+          }
+        }
+
+        gl_FragColor = vec4(finalColor, 1.0);
       }
     `,
     vertexColors: true,
@@ -52,6 +83,26 @@ function makePointCloudMaterial(uniforms: {
     depthTest: true,
     depthWrite: true,
   });
+}
+
+/**
+ * Compute segment endpoints from guide points in Three.js XZ coordinates.
+ * Returns arrays of start (A) and end (B) points as Vector2.
+ */
+function computeGuideSegments(guidePoints: { x: number; y: number }[]): {
+  segA: THREE.Vector2[];
+  segB: THREE.Vector2[];
+} {
+  const segA: THREE.Vector2[] = [];
+  const segB: THREE.Vector2[] = [];
+  for (let i = 0; i < guidePoints.length - 1 && i < MAX_GUIDE_PLANES; i++) {
+    const a = guidePoints[i];
+    const b = guidePoints[i + 1];
+    // Convert mm to Three.js meters: x/1000, z = -y/1000
+    segA.push(new THREE.Vector2(a.x / 1000, -a.y / 1000));
+    segB.push(new THREE.Vector2(b.x / 1000, -b.y / 1000));
+  }
+  return { segA, segB };
 }
 
 export function PointCloudViewer() {
@@ -67,23 +118,50 @@ export function PointCloudViewer() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Shared uniforms so we can update without recreating the material
+  // Shared uniforms — created once, updated in useFrame
   const uniforms = useMemo(
     () => ({
-      u_clipY: { value: clipY },
-      u_pointSize: { value: pointSize },
-      u_brightness: { value: brightness },
+      u_clipY: { value: 2.0 },
+      u_pointSize: { value: 1.0 },
+      u_brightness: { value: 1.0 },
+      u_guideSegCount: { value: 0 },
+      u_guideSegA: { value: Array.from({ length: MAX_GUIDE_PLANES }, () => new THREE.Vector2()) },
+      u_guideSegB: { value: Array.from({ length: MAX_GUIDE_PLANES }, () => new THREE.Vector2()) },
+      u_guidePlaneYMin: { value: 0.0 },
+      u_guidePlaneYMax: { value: 2.1 },
+      u_showGuidePlanes: { value: 0.0 },
     }),
-    // Only create once — we update .value in useFrame
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
-  // Update uniforms reactively — pointSize now in raw pixels (gl_PointSize)
+  // Update uniforms every frame
   useFrame(() => {
+    const state = useConfigStore.getState();
+
     uniforms.u_clipY.value = clipY - originY;
     uniforms.u_pointSize.value = pointSize;
     uniforms.u_brightness.value = brightness;
+
+    // Guide planes
+    const show = state.showGuidePlanes;
+    uniforms.u_showGuidePlanes.value = show ? 1.0 : 0.0;
+
+    if (show && state.guidePoints.length >= 2) {
+      const { segA, segB } = computeGuideSegments(state.guidePoints);
+      uniforms.u_guideSegCount.value = segA.length;
+      for (let i = 0; i < MAX_GUIDE_PLANES; i++) {
+        if (i < segA.length) {
+          uniforms.u_guideSegA.value[i].copy(segA[i]);
+          uniforms.u_guideSegB.value[i].copy(segB[i]);
+        }
+      }
+      const levels = state.levels.levels;
+      uniforms.u_guidePlaneYMin.value = levels.Understycke.zPosition / 1000;
+      uniforms.u_guidePlaneYMax.value = levels.Overstycke.zPosition / 1000;
+    } else {
+      uniforms.u_guideSegCount.value = 0;
+    }
   });
 
   const material = useMemo(() => makePointCloudMaterial(uniforms), [uniforms]);
@@ -92,7 +170,6 @@ export function PointCloudViewer() {
   useEffect(() => {
     if (!enabled || !file) return;
 
-    // Check if already cached
     const cached = getPlyGeometry(file);
     if (cached) {
       setGeometry(cached.geometry);
@@ -117,7 +194,6 @@ export function PointCloudViewer() {
 
   if (!enabled) return null;
 
-  // Shift the cloud so that the chosen origin (botten) aligns with Y=0
   return (
     <group ref={groupRef} position={[0, -originY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
       {geometry && <points geometry={geometry} material={material} renderOrder={0} frustumCulled={false} />}

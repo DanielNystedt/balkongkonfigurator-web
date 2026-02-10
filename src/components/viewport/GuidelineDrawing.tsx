@@ -75,7 +75,7 @@ function VertexDot({ point, color = '#ffffff', height }: { point: Point2D; color
   );
 }
 
-// ─── Editable dimension label with lock ─────────────────────
+// ─── Editable dimension label ───────────────────────────────
 function DimensionLabel({ start, end, length, segmentIndex, height }: {
   start: Point2D;
   end: Point2D;
@@ -84,8 +84,6 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   height: number;
 }) {
   const updateSegmentLength = useConfigStore((s) => s.updateSegmentLength);
-  const locked = useConfigStore((s) => !!s.lockedSegments[segmentIndex]);
-  const toggleLock = useConfigStore((s) => s.toggleSegmentLock);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -106,10 +104,9 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   ];
 
   const startEdit = useCallback(() => {
-    if (locked) return;
     setValue(String(Math.round(length)));
     setEditing(true);
-  }, [length, locked]);
+  }, [length]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -139,7 +136,7 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
     <Html position={labelPos} center style={{ pointerEvents: 'none', zIndex: 100 }}>
       <div
         onPointerDown={(e) => { if (!editing) { e.stopPropagation(); startEdit(); } }}
-        style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: editing ? 'default' : (locked ? 'not-allowed' : 'pointer'), pointerEvents: 'auto' }}
+        style={{ cursor: editing ? 'default' : 'pointer', pointerEvents: 'auto' }}
       >
         {editing ? (
           <input
@@ -177,21 +174,6 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
             {Math.round(length)} mm
           </div>
         )}
-        <div
-          onPointerDown={(e) => { e.stopPropagation(); toggleLock(segmentIndex); }}
-          style={{
-            cursor: 'pointer',
-            fontSize: '14px',
-            opacity: locked ? 1 : 0.3,
-            userSelect: 'none',
-            textShadow: '0 0 3px black',
-            filter: locked ? 'none' : 'grayscale(1)',
-            pointerEvents: 'auto',
-          }}
-          title={locked ? 'Lås upp' : 'Lås'}
-        >
-          {locked ? '🔒' : '🔓'}
-        </div>
       </div>
     </Html>
   );
@@ -235,7 +217,7 @@ function PreviewDimensionLabel({ start, end, length, height }: {
   );
 }
 
-// ─── Editable angle label with lock ─────────────────────────
+// ─── Editable angle label ───────────────────────────────────
 function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
   vertex: Point2D;
   prev: Point2D;
@@ -245,8 +227,6 @@ function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
   height: number;
 }) {
   const updateAngle = useConfigStore((s) => s.updateAngle);
-  const locked = useConfigStore((s) => !!s.lockedAngles[vertexIndex]);
-  const toggleLock = useConfigStore((s) => s.toggleAngleLock);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -264,7 +244,7 @@ function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
   const cross = (-d1x) * d2y - (-d1y) * d2x;
   if (cross > 0) { bx = -bx; by = -by; }
 
-  const offsetMm = 120;
+  const offsetMm = 200;
   const [vx, , vz] = toThree(vertex, height);
   const labelPos: [number, number, number] = [
     vx + (bx * offsetMm) / 1000,
@@ -273,10 +253,9 @@ function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
   ];
 
   const startEdit = useCallback(() => {
-    if (locked) return;
     setValue(angle.toFixed(1));
     setEditing(true);
-  }, [angle, locked]);
+  }, [angle]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -306,7 +285,7 @@ function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
     <Html position={labelPos} center style={{ pointerEvents: 'none', zIndex: 100 }}>
       <div
         onPointerDown={(e) => { if (!editing) { e.stopPropagation(); startEdit(); } }}
-        style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: editing ? 'default' : (locked ? 'not-allowed' : 'pointer'), pointerEvents: 'auto' }}
+        style={{ cursor: editing ? 'default' : 'pointer', pointerEvents: 'auto' }}
       >
         {editing ? (
           <input
@@ -344,21 +323,6 @@ function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
             {angle.toFixed(1)}°
           </div>
         )}
-        <div
-          onPointerDown={(e) => { e.stopPropagation(); toggleLock(vertexIndex); }}
-          style={{
-            cursor: 'pointer',
-            fontSize: '14px',
-            opacity: locked ? 1 : 0.3,
-            userSelect: 'none',
-            textShadow: '0 0 3px black',
-            filter: locked ? 'none' : 'grayscale(1)',
-            pointerEvents: 'auto',
-          }}
-          title={locked ? 'Lås upp' : 'Lås'}
-        >
-          {locked ? '🔒' : '🔓'}
-        </div>
       </div>
     </Html>
   );
