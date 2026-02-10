@@ -119,6 +119,12 @@ interface ConfigState {
   toggleSnap: () => void;
   toggleSnapAngle: () => void;
 
+  // Locks — prevent dragging from changing locked dimensions/angles
+  lockedSegments: Record<number, boolean>;
+  lockedAngles: Record<number, boolean>;
+  toggleSegmentLock: (segIndex: number) => void;
+  toggleAngleLock: (vertexIndex: number) => void;
+
   // Computed
   getSegments: () => SegmentInfo[];
   getAngles: () => AngleInfo[];
@@ -294,6 +300,26 @@ export const useConfigStore = create<ConfigState>()(
     snapEnabled: true,
     snapAngle: true,
 
+    // Locks
+    lockedSegments: {} as Record<number, boolean>,
+    lockedAngles: {} as Record<number, boolean>,
+    toggleSegmentLock: (segIndex) =>
+      set((state) => {
+        if (state.lockedSegments[segIndex]) {
+          delete state.lockedSegments[segIndex];
+        } else {
+          state.lockedSegments[segIndex] = true;
+        }
+      }),
+    toggleAngleLock: (vertexIndex) =>
+      set((state) => {
+        if (state.lockedAngles[vertexIndex]) {
+          delete state.lockedAngles[vertexIndex];
+        } else {
+          state.lockedAngles[vertexIndex] = true;
+        }
+      }),
+
     addPoint: (pt) =>
       set((state) => {
         const origin = state.guidePoints.length > 0
@@ -306,25 +332,113 @@ export const useConfigStore = create<ConfigState>()(
 
     movePoint: (index, pt) =>
       set((state) => {
-        if (index >= 0 && index < state.guidePoints.length) {
-          state.guidePoints[index] = pt;
-          // Regenerate panels for affected segments
-          const segCount = state.guidePoints.length - 1;
-          // Segment before this point
-          if (index > 0 && index - 1 < segCount) {
-            const edge = state.edgeConfigs[index - 1];
-            if (edge && edge.wallOrGlazingStatus === 'glazing') {
-              edge.panels = []; // clear so autoGen kicks in
-              autoGenForSegment(state, index - 1);
-            }
+        if (index < 0 || index >= state.guidePoints.length) return;
+        const pts = state.guidePoints;
+        const segCount = pts.length - 1;
+        let newPt = { ...pt };
+
+        // ── Enforce locked segment lengths ──────────────────
+        // Constrain newPt so locked segments keep their length
+        // (point slides along circle around the anchor)
+        if (index > 0 && state.lockedSegments[index - 1]) {
+          const anchor = pts[index - 1];
+          const dx = newPt.x - anchor.x;
+          const dy = newPt.y - anchor.y;
+          const curDist = Math.sqrt(dx * dx + dy * dy);
+          const ox = pts[index].x - anchor.x;
+          const oy = pts[index].y - anchor.y;
+          const lockedLen = Math.sqrt(ox * ox + oy * oy);
+          if (curDist > 1e-6) {
+            const scale = lockedLen / curDist;
+            newPt = { x: anchor.x + dx * scale, y: anchor.y + dy * scale };
+          } else {
+            return;
           }
-          // Segment after this point
-          if (index < segCount) {
-            const edge = state.edgeConfigs[index];
-            if (edge && edge.wallOrGlazingStatus === 'glazing') {
-              edge.panels = [];
-              autoGenForSegment(state, index);
-            }
+        }
+
+        if (index < segCount && state.lockedSegments[index]) {
+          const anchor = pts[index + 1];
+          const dx = newPt.x - anchor.x;
+          const dy = newPt.y - anchor.y;
+          const curDist = Math.sqrt(dx * dx + dy * dy);
+          const ox = pts[index].x - anchor.x;
+          const oy = pts[index].y - anchor.y;
+          const lockedLen = Math.sqrt(ox * ox + oy * oy);
+          if (curDist > 1e-6) {
+            const scale = lockedLen / curDist;
+            newPt = { x: anchor.x + dx * scale, y: anchor.y + dy * scale };
+          } else {
+            return;
+          }
+        }
+
+        // ── Enforce locked angles ───────────────────────────
+        // Save old position before mutation
+        const oldPt = { ...pts[index] };
+
+        // Apply the point move
+        pts[index] = newPt;
+
+        // Locked angle at vertex (index-1): rotate outgoing leg to preserve angle
+        if (index >= 2 && state.lockedAngles[index - 1]) {
+          const v = pts[index - 1];
+          const prevPt = pts[index - 2];
+          const inAngle = Math.atan2(v.y - prevPt.y, v.x - prevPt.x);
+          const oldOutAngle = Math.atan2(oldPt.y - v.y, oldPt.x - v.x);
+          const lockedAngleRad = oldOutAngle - inAngle;
+          const desiredOutAngle = inAngle + lockedAngleRad;
+          const outLen = Math.sqrt((pts[index].x - v.x) ** 2 + (pts[index].y - v.y) ** 2);
+          pts[index] = {
+            x: v.x + Math.cos(desiredOutAngle) * outLen,
+            y: v.y + Math.sin(desiredOutAngle) * outLen,
+          };
+        }
+
+        // Locked angle at THIS vertex: rotate outgoing leg relative to new incoming
+        if (index > 0 && index < segCount && state.lockedAngles[index]) {
+          const prevPt = pts[index - 1];
+          const nextPt = pts[index + 1];
+          const newInAngle = Math.atan2(pts[index].y - prevPt.y, pts[index].x - prevPt.x);
+          const oldInAngle = Math.atan2(oldPt.y - prevPt.y, oldPt.x - prevPt.x);
+          const oldOutAngle = Math.atan2(nextPt.y - oldPt.y, nextPt.x - oldPt.x);
+          const lockedAngleRad = oldOutAngle - oldInAngle;
+          const desiredOutAngle = newInAngle + lockedAngleRad;
+          const outLen = Math.sqrt((nextPt.x - pts[index].x) ** 2 + (nextPt.y - pts[index].y) ** 2);
+          pts[index + 1] = {
+            x: pts[index].x + Math.cos(desiredOutAngle) * outLen,
+            y: pts[index].y + Math.sin(desiredOutAngle) * outLen,
+          };
+        }
+
+        // Locked angle at vertex (index+1): rotate further leg to preserve angle
+        if (index < segCount - 1 && state.lockedAngles[index + 1]) {
+          const v = pts[index + 1];
+          const newInAngle = Math.atan2(v.y - pts[index].y, v.x - pts[index].x);
+          const oldInAngle = Math.atan2(v.y - oldPt.y, v.x - oldPt.x);
+          const nextNext = pts[index + 2];
+          const oldOutAngle = Math.atan2(nextNext.y - v.y, nextNext.x - v.x);
+          const lockedAngleRad = oldOutAngle - oldInAngle;
+          const desiredOutAngle = newInAngle + lockedAngleRad;
+          const outLen = Math.sqrt((nextNext.x - v.x) ** 2 + (nextNext.y - v.y) ** 2);
+          pts[index + 2] = {
+            x: v.x + Math.cos(desiredOutAngle) * outLen,
+            y: v.y + Math.sin(desiredOutAngle) * outLen,
+          };
+        }
+
+        // Regenerate panels for affected segments
+        if (index > 0 && index - 1 < segCount) {
+          const edge = state.edgeConfigs[index - 1];
+          if (edge && edge.wallOrGlazingStatus === 'glazing') {
+            edge.panels = [];
+            autoGenForSegment(state, index - 1);
+          }
+        }
+        if (index < segCount) {
+          const edge = state.edgeConfigs[index];
+          if (edge && edge.wallOrGlazingStatus === 'glazing') {
+            edge.panels = [];
+            autoGenForSegment(state, index);
           }
         }
       }),
@@ -355,6 +469,7 @@ export const useConfigStore = create<ConfigState>()(
       set((state) => {
         const pts = state.guidePoints;
         if (segmentIndex < 0 || segmentIndex >= pts.length - 1) return;
+        if (state.lockedSegments[segmentIndex]) return; // locked
         const s = pts[segmentIndex];
         const e = pts[segmentIndex + 1];
         const dx = e.x - s.x;
@@ -372,16 +487,26 @@ export const useConfigStore = create<ConfigState>()(
       set((state) => {
         const pts = state.guidePoints;
         if (vertexIndex <= 0 || vertexIndex >= pts.length - 1) return;
+        if (state.lockedAngles[vertexIndex]) return; // locked — don't change
         const prev = pts[vertexIndex - 1];
         const curr = pts[vertexIndex];
         const next = pts[vertexIndex + 1];
 
+        // Incoming direction: prev → curr
         const inDx = curr.x - prev.x;
         const inDy = curr.y - prev.y;
         const inAngle = Math.atan2(inDy, inDx);
 
+        // Determine current winding via cross product
+        const outDx = next.x - curr.x;
+        const outDy = next.y - curr.y;
+        const cross = inDx * outDy - inDy * outDx;
+
+        // cross >= 0 means left turn, cross < 0 means right turn
         const newAngleRad = newAngle * (Math.PI / 180);
-        const outAngle = inAngle + Math.PI - newAngleRad;
+        const outAngle = cross >= 0
+          ? inAngle + Math.PI - newAngleRad
+          : inAngle - Math.PI + newAngleRad;
 
         const outLen = distance2D(curr.x, curr.y, next.x, next.y);
         pts[vertexIndex + 1] = {

@@ -305,7 +305,8 @@ function DrawingInteraction() {
       if (!mm) return;
 
       if (s.isDrawing) {
-        if (s.guidePoints.length >= 2) s.undoLastPoint();
+        // Add the final point where user double-clicked, then finish
+        s.addPoint(mm);
         s.setIsDrawing(false);
         return;
       }

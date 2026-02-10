@@ -14,7 +14,7 @@ function midpoint(a: Point2D, b: Point2D): Point2D {
 }
 
 // ─── Polyline using drei Line ───────────────────────────────
-function PolyLine({ points, color, lineWidth = 2, height }: {
+function PolyLine({ points, color, lineWidth = 4, height }: {
   points: Point2D[];
   color: string;
   lineWidth?: number;
@@ -57,7 +57,7 @@ function SegmentLine({ start, end, color, height }: {
     <Line
       points={positions}
       color={color}
-      lineWidth={2}
+      lineWidth={4}
       depthTest={false}
       renderOrder={10}
     />
@@ -75,7 +75,7 @@ function VertexDot({ point, color = '#ffffff', height }: { point: Point2D; color
   );
 }
 
-// ─── Editable dimension label ───────────────────────────────
+// ─── Editable dimension label with lock ─────────────────────
 function DimensionLabel({ start, end, length, segmentIndex, height }: {
   start: Point2D;
   end: Point2D;
@@ -84,6 +84,8 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   height: number;
 }) {
   const updateSegmentLength = useConfigStore((s) => s.updateSegmentLength);
+  const locked = useConfigStore((s) => !!s.lockedSegments[segmentIndex]);
+  const toggleLock = useConfigStore((s) => s.toggleSegmentLock);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -93,9 +95,10 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const len = Math.sqrt(dx * dx + dy * dy);
-  const nx = len > 0 ? -dy / len : 0;
-  const ny = len > 0 ? dx / len : 0;
-  const offsetMm = 50;
+  // Right-hand normal → points inward for CW polyline
+  const nx = len > 0 ? dy / len : 0;
+  const ny = len > 0 ? -dx / len : 0;
+  const offsetMm = 80;
   const labelPos: [number, number, number] = [
     x + (nx * offsetMm) / 1000,
     height + 0.01,
@@ -103,14 +106,18 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   ];
 
   const startEdit = useCallback(() => {
+    if (locked) return;
     setValue(String(Math.round(length)));
     setEditing(true);
-  }, [length]);
+  }, [length, locked]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+      const el = inputRef.current;
+      setTimeout(() => {
+        el.focus();
+        el.select();
+      }, 0);
     }
   }, [editing]);
 
@@ -129,43 +136,63 @@ function DimensionLabel({ start, end, length, segmentIndex, height }: {
   }, [commit]);
 
   return (
-    <Html position={labelPos} center style={{ pointerEvents: 'auto', zIndex: 100 }}>
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={onKeyDown}
-          style={{
-            width: 70,
-            fontSize: '22px',
-            fontFamily: 'monospace',
-            color: '#ef4444',
-            background: 'rgba(0,0,0,0.85)',
-            border: '1px solid #ef4444',
-            borderRadius: 3,
-            textAlign: 'center',
-            outline: 'none',
-            padding: '1px 4px',
-          }}
-        />
-      ) : (
+    <Html position={labelPos} center style={{ pointerEvents: 'none', zIndex: 100 }}>
+      <div
+        onPointerDown={(e) => { if (!editing) { e.stopPropagation(); startEdit(); } }}
+        style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: editing ? 'default' : (locked ? 'not-allowed' : 'pointer'), pointerEvents: 'auto' }}
+      >
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={onKeyDown}
+            onPointerDown={(e) => e.stopPropagation()}
+            onFocus={(e) => e.target.select()}
+            style={{
+              width: 70,
+              fontSize: '22px',
+              fontFamily: 'monospace',
+              color: '#ef4444',
+              background: 'rgba(0,0,0,0.85)',
+              border: '1px solid #ef4444',
+              borderRadius: 3,
+              textAlign: 'center',
+              outline: 'none',
+              padding: '1px 4px',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              color: '#ef4444',
+              fontSize: '22px',
+              fontFamily: 'monospace',
+              whiteSpace: 'nowrap',
+              textShadow: '0 0 4px black, 0 0 8px black',
+              userSelect: 'none',
+            }}
+          >
+            {Math.round(length)} mm
+          </div>
+        )}
         <div
-          onClick={startEdit}
+          onPointerDown={(e) => { e.stopPropagation(); toggleLock(segmentIndex); }}
           style={{
-            color: '#ef4444',
-            fontSize: '22px',
-            fontFamily: 'monospace',
-            whiteSpace: 'nowrap',
-            textShadow: '0 0 4px black, 0 0 8px black',
             cursor: 'pointer',
+            fontSize: '14px',
+            opacity: locked ? 1 : 0.3,
             userSelect: 'none',
+            textShadow: '0 0 3px black',
+            filter: locked ? 'none' : 'grayscale(1)',
+            pointerEvents: 'auto',
           }}
+          title={locked ? 'Lås upp' : 'Lås'}
         >
-          {Math.round(length)} mm
+          {locked ? '🔒' : '🔓'}
         </div>
-      )}
+      </div>
     </Html>
   );
 }
@@ -182,9 +209,9 @@ function PreviewDimensionLabel({ start, end, length, height }: {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const len = Math.sqrt(dx * dx + dy * dy);
-  const nx = len > 0 ? -dy / len : 0;
-  const ny = len > 0 ? dx / len : 0;
-  const offsetMm = 50;
+  const nx = len > 0 ? dy / len : 0;
+  const ny = len > 0 ? -dx / len : 0;
+  const offsetMm = 80;
   const labelPos: [number, number, number] = [
     x + (nx * offsetMm) / 1000,
     height + 0.01,
@@ -208,28 +235,56 @@ function PreviewDimensionLabel({ start, end, length, height }: {
   );
 }
 
-// ─── Editable angle label ──────────────────────────────────
-function AngleLabel({ vertex, angle, vertexIndex, height }: {
+// ─── Editable angle label with lock ─────────────────────────
+function AngleLabel({ vertex, prev, next, angle, vertexIndex, height }: {
   vertex: Point2D;
+  prev: Point2D;
+  next: Point2D;
   angle: number;
   vertexIndex: number;
   height: number;
 }) {
   const updateAngle = useConfigStore((s) => s.updateAngle);
+  const locked = useConfigStore((s) => !!s.lockedAngles[vertexIndex]);
+  const toggleLock = useConfigStore((s) => s.toggleAngleLock);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const [x, , z] = toThree(vertex, height);
+
+  // Compute bisector direction pointing inward
+  const d1x = prev.x - vertex.x, d1y = prev.y - vertex.y;
+  const d2x = next.x - vertex.x, d2y = next.y - vertex.y;
+  const l1 = Math.sqrt(d1x * d1x + d1y * d1y) || 1;
+  const l2 = Math.sqrt(d2x * d2x + d2y * d2y) || 1;
+  const u1x = d1x / l1, u1y = d1y / l1;
+  const u2x = d2x / l2, u2y = d2y / l2;
+  let bx = u1x + u2x, by = u1y + u2y;
+  const bl = Math.sqrt(bx * bx + by * by) || 1;
+  bx /= bl; by /= bl;
+  const cross = (-d1x) * d2y - (-d1y) * d2x;
+  if (cross > 0) { bx = -bx; by = -by; }
+
+  const offsetMm = 120;
+  const [vx, , vz] = toThree(vertex, height);
+  const labelPos: [number, number, number] = [
+    vx + (bx * offsetMm) / 1000,
+    height + 0.01,
+    vz - (by * offsetMm) / 1000,
+  ];
 
   const startEdit = useCallback(() => {
+    if (locked) return;
     setValue(angle.toFixed(1));
     setEditing(true);
-  }, [angle]);
+  }, [angle, locked]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+      const el = inputRef.current;
+      setTimeout(() => {
+        el.focus();
+        el.select();
+      }, 0);
     }
   }, [editing]);
 
@@ -248,43 +303,63 @@ function AngleLabel({ vertex, angle, vertexIndex, height }: {
   }, [commit]);
 
   return (
-    <Html position={[x, height + 0.01, z]} center style={{ pointerEvents: 'auto', zIndex: 100 }}>
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={onKeyDown}
-          style={{
-            width: 60,
-            fontSize: '20px',
-            fontFamily: 'monospace',
-            color: '#c084fc',
-            background: 'rgba(0,0,0,0.85)',
-            border: '1px solid #c084fc',
-            borderRadius: 3,
-            textAlign: 'center',
-            outline: 'none',
-            padding: '1px 4px',
-          }}
-        />
-      ) : (
+    <Html position={labelPos} center style={{ pointerEvents: 'none', zIndex: 100 }}>
+      <div
+        onPointerDown={(e) => { if (!editing) { e.stopPropagation(); startEdit(); } }}
+        style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: editing ? 'default' : (locked ? 'not-allowed' : 'pointer'), pointerEvents: 'auto' }}
+      >
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={onKeyDown}
+            onPointerDown={(e) => e.stopPropagation()}
+            onFocus={(e) => e.target.select()}
+            style={{
+              width: 60,
+              fontSize: '20px',
+              fontFamily: 'monospace',
+              color: '#c084fc',
+              background: 'rgba(0,0,0,0.85)',
+              border: '1px solid #c084fc',
+              borderRadius: 3,
+              textAlign: 'center',
+              outline: 'none',
+              padding: '1px 4px',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              color: '#c084fc',
+              fontSize: '20px',
+              fontFamily: 'monospace',
+              whiteSpace: 'nowrap',
+              textShadow: '0 0 4px black, 0 0 8px black',
+              userSelect: 'none',
+            }}
+          >
+            {angle.toFixed(1)}°
+          </div>
+        )}
         <div
-          onClick={startEdit}
+          onPointerDown={(e) => { e.stopPropagation(); toggleLock(vertexIndex); }}
           style={{
-            color: '#c084fc',
-            fontSize: '20px',
-            fontFamily: 'monospace',
-            whiteSpace: 'nowrap',
-            textShadow: '0 0 4px black, 0 0 8px black',
             cursor: 'pointer',
+            fontSize: '14px',
+            opacity: locked ? 1 : 0.3,
             userSelect: 'none',
+            textShadow: '0 0 3px black',
+            filter: locked ? 'none' : 'grayscale(1)',
+            pointerEvents: 'auto',
           }}
+          title={locked ? 'Lås upp' : 'Lås'}
         >
-          {angle.toFixed(1)}°
+          {locked ? '🔒' : '🔓'}
         </div>
-      )}
+      </div>
     </Html>
   );
 }
@@ -297,15 +372,13 @@ export function GuidelineDrawing() {
   const getSegments = useConfigStore((s) => s.getSegments);
   const getAngles = useConfigStore((s) => s.getAngles);
   const getOffsetPoints = useConfigStore((s) => s.getOffsetPoints);
-  // Guide always renders on the Mellanstycke (middle) plane
   const mellanZ = useConfigStore((s) => s.levels.levels.Mellanstycke.zPosition);
-  const guideHeight = mellanZ / 1000; // mm → meters
+  const guideHeight = mellanZ / 1000;
 
   const segments = getSegments();
   const angles = getAngles();
   const offsetPoints = getOffsetPoints();
 
-  // Preview segment: from last guide point to snapped preview
   const lastPt = guidePoints.length > 0 ? guidePoints[guidePoints.length - 1] : null;
   const showPreview = isDrawing && lastPt && previewPoint;
   const previewLength = showPreview
@@ -316,7 +389,6 @@ export function GuidelineDrawing() {
 
   return (
     <group renderOrder={10}>
-      {/* Red main polyline segments */}
       {segments.map((seg, i) => (
         <group key={`seg-${i}`}>
           <SegmentLine start={seg.start} end={seg.end} color="#ef4444" height={guideHeight} />
@@ -330,7 +402,6 @@ export function GuidelineDrawing() {
         </group>
       ))}
 
-      {/* Preview segment while drawing */}
       {showPreview && (
         <group>
           <SegmentLine start={lastPt} end={previewPoint} color="#60a5fa" height={guideHeight} />
@@ -345,21 +416,20 @@ export function GuidelineDrawing() {
         </group>
       )}
 
-      {/* Orange offset line */}
       {offsetPoints.length >= 2 && (
         <PolyLine points={offsetPoints} color="#f97316" height={guideHeight} />
       )}
 
-      {/* Vertex dots */}
       {guidePoints.map((pt, i) => (
         <VertexDot key={`pt-${i}`} point={pt} color="#ffffff" height={guideHeight} />
       ))}
 
-      {/* Angle labels at corners — clickable to edit */}
       {angles.map((a, i) => (
         <AngleLabel
           key={`angle-${i}`}
           vertex={a.vertex}
+          prev={guidePoints[a.index - 1]}
+          next={guidePoints[a.index + 1]}
           angle={a.angle}
           vertexIndex={a.index}
           height={guideHeight}
