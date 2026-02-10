@@ -38,6 +38,7 @@ function makePointCloudMaterial(uniforms: Record<string, THREE.IUniform>) {
       uniform float u_guidePlaneYMin;
       uniform float u_guidePlaneYMax;
       uniform float u_showGuidePlanes;
+      uniform float u_guidePlaneIsolate;
       varying vec3 vColor;
       varying vec3 vWorldPos;
 
@@ -57,6 +58,7 @@ function makePointCloudMaterial(uniforms: Record<string, THREE.IUniform>) {
             && vWorldPos.y >= u_guidePlaneYMin
             && vWorldPos.y <= u_guidePlaneYMax) {
           vec2 p = vec2(vWorldPos.x, vWorldPos.z);
+          float minDist = 999.0;
           for (int i = 0; i < ${MAX_GUIDE_PLANES}; i++) {
             if (i >= u_guideSegCount) break;
             vec2 a = u_guideSegA[i];
@@ -64,14 +66,28 @@ function makePointCloudMaterial(uniforms: Record<string, THREE.IUniform>) {
             vec2 ab = b - a;
             vec2 ap = p - a;
             float lenSq = dot(ab, ab);
-            // Project point onto segment, clamp t to [0,1]
             float t = clamp(dot(ap, ab) / lenSq, 0.0, 1.0);
             vec2 closest = a + t * ab;
             float d = length(p - closest);
-            if (d < 0.003) {
-              gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-              return;
-            }
+            minDist = min(minDist, d);
+          }
+
+          // Isolate mode: discard everything beyond 50mm from any segment
+          if (u_guidePlaneIsolate > 0.5 && minDist > 0.05) {
+            discard;
+          }
+
+          // Red highlight at ~3mm
+          if (minDist < 0.003) {
+            gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            return;
+          }
+        }
+
+        // Isolate mode but outside Y range → discard
+        if (u_guidePlaneIsolate > 0.5 && u_showGuidePlanes > 0.5) {
+          if (vWorldPos.y < u_guidePlaneYMin || vWorldPos.y > u_guidePlaneYMax) {
+            discard;
           }
         }
 
@@ -130,6 +146,7 @@ export function PointCloudViewer() {
       u_guidePlaneYMin: { value: 0.0 },
       u_guidePlaneYMax: { value: 2.1 },
       u_showGuidePlanes: { value: 0.0 },
+      u_guidePlaneIsolate: { value: 0.0 },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -146,6 +163,7 @@ export function PointCloudViewer() {
     // Guide planes
     const show = state.showGuidePlanes;
     uniforms.u_showGuidePlanes.value = show ? 1.0 : 0.0;
+    uniforms.u_guidePlaneIsolate.value = state.guidePlaneIsolate ? 1.0 : 0.0;
 
     if (show && state.guidePoints.length >= 2) {
       const { segA, segB } = computeGuideSegments(state.guidePoints);

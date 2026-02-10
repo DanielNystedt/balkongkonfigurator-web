@@ -188,6 +188,8 @@ interface ConfigState {
   // ─── 3D guide planes ──────────────────────────────────────
   showGuidePlanes: boolean;
   setShowGuidePlanes: (v: boolean) => void;
+  guidePlaneIsolate: boolean;
+  setGuidePlaneIsolate: (v: boolean) => void;
 
   // ─── 2D viewBox (shared between SVG and Three.js) ──────
   cadViewBox: { x: number; y: number; w: number; h: number };
@@ -713,6 +715,9 @@ export const useConfigStore = create<ConfigState>()(
     showGuidePlanes: false,
     setShowGuidePlanes: (v) =>
       set((state) => { state.showGuidePlanes = v; }),
+    guidePlaneIsolate: false,
+    setGuidePlaneIsolate: (v) =>
+      set((state) => { state.guidePlaneIsolate = v; }),
 
     // ─── 2D viewBox (shared between SVG and Three.js) ──────
     cadViewBox: { x: -3000, y: -3000, w: 6000, h: 6000 },
