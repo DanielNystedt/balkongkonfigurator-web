@@ -27,7 +27,7 @@ import {
 } from '../engine/calculations/edgeCalculations';
 
 export type ActiveMode = 'select' | 'draw-guide' | 'levels';
-export type ActiveView = '2d' | '3d' | '2d3d';
+export type ActiveView = '2d' | '3d' | '2d3d' | 'panel';
 
 export interface SegmentInfo {
   start: Point2D;

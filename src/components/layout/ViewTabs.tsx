@@ -4,11 +4,13 @@ import type { ActiveView } from '../../store/useConfigStore';
 import { ViewportCanvas } from '../viewport/ViewportCanvas';
 import { CadView2D } from '../cad/CadView2D';
 import { ClipSlider } from '../viewport/ClipSlider';
+import { PanelBuilderView } from '../panel-builder/PanelBuilderView';
 
 const TABS: { view: ActiveView; label: string }[] = [
   { view: '2d', label: '2D' },
   { view: '3d', label: '3D Modell' },
   { view: '2d3d', label: '2D/3D' },
+  { view: 'panel', label: 'Panel' },
 ];
 
 export function ViewTabs() {
@@ -91,6 +93,7 @@ export function ViewTabs() {
       <div style={{ flex: 1, position: 'relative' }} ref={containerRef}>
         {activeView === '2d' && render2D()}
         {activeView === '3d' && render3D()}
+        {activeView === 'panel' && <PanelBuilderView />}
         {activeView === '2d3d' && (
           <div style={{ display: 'flex', height: '100%', width: '100%', position: 'absolute', inset: 0 }}>
             <div style={{ position: 'relative', overflow: 'hidden', width: `${splitPercent}%` }}>
