@@ -155,34 +155,6 @@ function EndCap({
   );
 }
 
-// ─── Sub-component: Running unit (Löpenhet) ──────────────────────
-function RunningUnit({ positionX, positionY }: { positionX: number; positionY: number }) {
-  const { scene } = useGLTF('/models/Löpenhet.glb');
-  const rot = usePartRot('runningUnit');
-
-  const cloned = useMemo(() => {
-    const c = scene.clone(true);
-    c.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        (child as THREE.Mesh).material = new THREE.MeshStandardMaterial({
-          color: '#808080',
-          metalness: 0.7,
-          roughness: 0.2,
-        });
-      }
-    });
-    return c;
-  }, [scene]);
-
-  return (
-    <group position={[positionX, positionY, 0]}>
-      <group rotation={rot}>
-        <primitive object={cloned} />
-      </group>
-    </group>
-  );
-}
-
 // ─── Sub-component: Main lock (Huvudlås) ─────────────────────────
 function MainLock({ positionX, positionY }: { positionX: number; positionY: number }) {
   const { scene } = useGLTF('/models/Huvudlås.glb');
@@ -259,9 +231,6 @@ export function GlassPanel3D() {
   // = profileStartX + (panelWidth - leftOffset - rightOffset) / 1000
   const bottomRightCapX = upperProfileEndX;
 
-  // Running unit: 86mm from top of glass module height (Ruby code)
-  const runningUnitY = halfModH - (86 / 1000);
-
   // Main lock: on LOWER rail, between profile end and end cap
   // Profile ends → Lock → End cap (outermost)
   const mainLockX = lowerProfileEndX;
@@ -301,10 +270,7 @@ export function GlassPanel3D() {
       {/* Bottom right: end cap sits OUTSIDE the lock (profile → lock → end cap) */}
       <EndCap glbPath={rightCapGlb} positionX={bottomRightCapX} positionY={profileBottomY} partKey="endCapBR" />
 
-      {/* Running unit (Löpenhet) — 86mm from top, centered */}
-      <RunningUnit positionX={0} positionY={runningUnitY} />
-
-      {/* Main lock — same height as running unit, right edge */}
+      {/* Main lock — on lower rail, right edge */}
       {lockType !== 'none' && (
         <MainLock positionX={mainLockX} positionY={mainLockY} />
       )}
@@ -316,7 +282,6 @@ export function GlassPanel3D() {
       <OriginCross position={[upperProfileEndX, profileTopY, 0]} />
       <OriginCross position={[lowerProfileEndX, profileBottomY, 0]} />
       <OriginCross position={[bottomRightCapX, profileBottomY, 0]} />
-      <OriginCross position={[0, runningUnitY, 0]} />
       {lockType !== 'none' && (
         <OriginCross position={[mainLockX, mainLockY, 0]} />
       )}
@@ -326,7 +291,6 @@ export function GlassPanel3D() {
 
 // ─── Preload all possible GLBs ───────────────────────────────────
 useGLTF.preload('/models/Glashållare_10mm.glb');
-useGLTF.preload('/models/Löpenhet.glb');
 useGLTF.preload('/models/Huvudlås.glb');
 
 // Preload all end cap GLBs
