@@ -1,11 +1,12 @@
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment, Center } from '@react-three/drei';
 import { GlassPanel3D } from './GlassPanel3D';
+import { OffsetSettings } from './OffsetSettings';
 import {
   usePanelBuilderStore,
-  END_CAP_WIDTH,
-  GLASS_HEIGHT_DEDUCTION,
+  END_CAP_INFO,
+  END_CAP_TYPES,
   PART_KEYS,
   PART_LABELS,
   type EndCapType,
@@ -103,23 +104,27 @@ function PanelConfigSidebar() {
   const setEndCapLeftType = usePanelBuilderStore((s) => s.setEndCapLeftType);
   const setEndCapRightType = usePanelBuilderStore((s) => s.setEndCapRightType);
   const setLockType = usePanelBuilderStore((s) => s.setLockType);
+  const glassOffsets = usePanelBuilderStore((s) => s.glassOffsets);
+  const topLockWidths = usePanelBuilderStore((s) => s.topLockWidths);
+  const bottomLockWidths = usePanelBuilderStore((s) => s.bottomLockWidths);
+  const glassHeightDed = usePanelBuilderStore((s) => s.glassHeightDeduction);
 
-  // Derived display values
-  const leftCapW = END_CAP_WIDTH[endCapLeftType];
-  const rightCapW = END_CAP_WIDTH[endCapRightType];
-  const glassWidth = panelWidth - leftCapW - rightCapW;
-  const glassHeight = panelHeight - GLASS_HEIGHT_DEDUCTION;
+  // Derived display values (using editable offsets)
+  const leftOffset = glassOffsets[endCapLeftType];
+  const rightOffset = glassOffsets[endCapRightType];
+  const glassWidth = panelWidth;  // glass fills full panel width
+  const glassHeight = panelHeight - glassHeightDed;
+  const upperProfileLen = panelWidth - leftOffset - rightOffset;
+  const lowerProfileLen = panelWidth - leftOffset - rightOffset - bottomLockWidths[lockType];
 
-  const endCapOptions: { value: EndCapType; label: string }[] = [
-    { value: 'straight', label: 'Slutlock (25mm)' },
-    { value: '45deg', label: '90° lock (11.5mm)' },
-    { value: 'variable', label: 'Variabelt (7.9mm)' },
-    { value: 'meeting', label: 'Möteslock (5mm)' },
-  ];
+  const endCapOptions = END_CAP_TYPES.map((key) => ({
+    value: key,
+    label: END_CAP_INFO[key].label,
+  }));
 
   const lockOptions: { value: LockVariant; label: string }[] = [
-    { value: 'single', label: 'Enkellås' },
-    { value: 'double', label: 'Dubbellås' },
+    { value: 'single', label: 'Enkellås (överlås 30mm / undrelås 5mm)' },
+    { value: 'double', label: 'Dubbellås (överlås 30mm / undrelås 5mm)' },
     { value: 'none', label: 'Inget lås' },
   ];
 
@@ -157,21 +162,7 @@ function PanelConfigSidebar() {
   };
 
   return (
-    <div
-      style={{
-        width: 250,
-        background: '#f8f8f8',
-        borderLeft: '1px solid #ddd',
-        padding: 12,
-        overflowY: 'auto',
-        flexShrink: 0,
-        fontFamily: 'system-ui, sans-serif',
-      }}
-    >
-      <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
-        Panelkonfigurator
-      </h3>
-
+    <>
       {/* Dimensions */}
       <div style={sectionStyle}>
         <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>Dimensioner</div>
@@ -265,19 +256,31 @@ function PanelConfigSidebar() {
           <span>{glassHeight.toFixed(1)} mm</span>
         </div>
         <div style={infoRowStyle}>
-          <span>Glaslistlängd:</span>
-          <span>{glassWidth.toFixed(1)} mm</span>
+          <span>Övre glaslist:</span>
+          <span>{upperProfileLen.toFixed(1)} mm</span>
         </div>
         <div style={infoRowStyle}>
-          <span>Ändlock V:</span>
-          <span>{leftCapW} mm</span>
+          <span>Undre glaslist:</span>
+          <span>{lowerProfileLen.toFixed(1)} mm</span>
         </div>
         <div style={infoRowStyle}>
-          <span>Ändlock H:</span>
-          <span>{rightCapW} mm</span>
+          <span>Glasoffset V:</span>
+          <span>{leftOffset} mm</span>
+        </div>
+        <div style={infoRowStyle}>
+          <span>Glasoffset H:</span>
+          <span>{rightOffset} mm</span>
+        </div>
+        <div style={infoRowStyle}>
+          <span>Överlås avdrag:</span>
+          <span>{topLockWidths[lockType]} mm</span>
+        </div>
+        <div style={infoRowStyle}>
+          <span>Undrelås avdrag:</span>
+          <span>{bottomLockWidths[lockType]} mm</span>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -291,8 +294,21 @@ function LoadingFallback() {
   );
 }
 
+// ─── Tab styles ─────────────────────────────────────────────────
+const tabBtnBase: React.CSSProperties = {
+  flex: 1,
+  padding: '8px 4px',
+  fontSize: 11,
+  fontWeight: 600,
+  border: 'none',
+  cursor: 'pointer',
+  transition: 'background 0.15s',
+};
+
 // ─── Main view ───────────────────────────────────────────────────
 export function PanelBuilderView() {
+  const [activeTab, setActiveTab] = useState<'config' | 'settings'>('config');
+
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%' }}>
       {/* 3D Viewport */}
@@ -323,8 +339,49 @@ export function PanelBuilderView() {
         </Canvas>
       </div>
 
-      {/* Config panel */}
-      <PanelConfigSidebar />
+      {/* Sidebar with tabs */}
+      <div
+        style={{
+          width: 260,
+          background: '#f8f8f8',
+          borderLeft: '1px solid #ddd',
+          display: 'flex',
+          flexDirection: 'column',
+          flexShrink: 0,
+          fontFamily: 'system-ui, sans-serif',
+        }}
+      >
+        {/* Tab bar */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #ddd' }}>
+          <button
+            onClick={() => setActiveTab('config')}
+            style={{
+              ...tabBtnBase,
+              background: activeTab === 'config' ? '#f8f8f8' : '#e0e0e0',
+              color: activeTab === 'config' ? '#333' : '#888',
+              borderBottom: activeTab === 'config' ? '2px solid #2196F3' : '2px solid transparent',
+            }}
+          >
+            Konfigurator
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            style={{
+              ...tabBtnBase,
+              background: activeTab === 'settings' ? '#f8f8f8' : '#e0e0e0',
+              color: activeTab === 'settings' ? '#333' : '#888',
+              borderBottom: activeTab === 'settings' ? '2px solid #e65100' : '2px solid transparent',
+            }}
+          >
+            Inställningar
+          </button>
+        </div>
+
+        {/* Tab content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+          {activeTab === 'config' ? <PanelConfigSidebar /> : <OffsetSettings />}
+        </div>
+      </div>
     </div>
   );
 }

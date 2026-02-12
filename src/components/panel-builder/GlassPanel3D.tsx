@@ -3,10 +3,8 @@ import { useGLTF, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   usePanelBuilderStore,
-  END_CAP_GLB,
-  END_CAP_WIDTH,
-  GLASS_HEIGHT_DEDUCTION,
-  GLASS_MODULE_HEIGHT_DEDUCTION,
+  END_CAP_INFO,
+  END_CAP_TYPES,
   type PartKey,
 } from '../../store/panelBuilderStore';
 
@@ -82,7 +80,6 @@ function GlassHolderProfile({
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
-    console.log(`Glashållare size: X=${(size.x*1000).toFixed(1)} Y=${(size.y*1000).toFixed(1)} Z=${(size.z*1000).toFixed(1)}`);
 
     // Scale the longest axis (extrusion direction) to target length
     const targetM = profileLength / 1000;
@@ -221,42 +218,58 @@ export function GlassPanel3D() {
   const endCapLeftType = usePanelBuilderStore((s) => s.endCapLeftType);
   const endCapRightType = usePanelBuilderStore((s) => s.endCapRightType);
   const lockType = usePanelBuilderStore((s) => s.lockType);
+  const glassOffsets = usePanelBuilderStore((s) => s.glassOffsets);
+  const topLockWidths = usePanelBuilderStore((s) => s.topLockWidths);
+  const bottomLockWidths = usePanelBuilderStore((s) => s.bottomLockWidths);
+  const glassHeightDed = usePanelBuilderStore((s) => s.glassHeightDeduction);
+  const glassModHeightDed = usePanelBuilderStore((s) => s.glassModuleHeightDeduction);
 
   const groupRef = useRef<THREE.Group>(null);
 
-  // ─── Derived dimensions (mm) ───────────────────────────────
-  const glassHeight = panelHeight - GLASS_HEIGHT_DEDUCTION;
-  const glassModuleHeight = panelHeight - GLASS_MODULE_HEIGHT_DEDUCTION;
-  const leftCapW = END_CAP_WIDTH[endCapLeftType];
-  const rightCapW = END_CAP_WIDTH[endCapRightType];
-  const glassWidth = panelWidth - leftCapW - rightCapW;
-  const profileLength = glassWidth;
+  // ─── Derived dimensions (mm) — uses editable offsets ────────
+  const glassHeight = panelHeight - glassHeightDed;
+  const glassModuleHeight = panelHeight - glassModHeightDed;
+  const leftOffset = glassOffsets[endCapLeftType];    // glass extends this much past left holder end
+  const rightOffset = glassOffsets[endCapRightType];  // glass extends this much past right holder end
+
+  // Glass width = full panel width (glass fills the whole module)
+  const glassWidth = panelWidth;
+
+  // Profile lengths: holder is shorter than glass by the glass offsets
+  // Lock only sits on the LOWER rail, same positioning as end caps
+  const upperProfileLength = glassWidth - leftOffset - rightOffset;
+  const lowerProfileLength = glassWidth - leftOffset - rightOffset - bottomLockWidths[lockType];
 
   // ─── Positions (meters) ────────────────────────────────────
   const halfModH = (glassModuleHeight / 1000) / 2;
-  const halfPanelW = (panelWidth / 1000) / 2;
-  const leftCapM = leftCapW / 1000;    // left end cap width in meters
-  const rightCapM = rightCapW / 1000;  // right end cap width in meters
+  const halfGlassW = (glassWidth / 1000) / 2;
+  const leftOffsetM = leftOffset / 1000;  // left glass offset in meters
 
-  // Profile origin (red X=0) placed at left glass edge, after end cap
-  const profileStartX = -halfPanelW + leftCapM;
+  // Profile origin placed leftOffset mm in from glass left edge
+  const profileStartX = -halfGlassW + leftOffsetM;
   const profileTopY = halfModH;
   const profileBottomY = -halfModH;
 
-  // End caps: center-origo at profile ends (flush)
+  // End caps positioned at glass offset boundary (outermost)
   const endCapLeftX = profileStartX;
-  const profileEndX = profileStartX + (profileLength / 1000);
-  const endCapRightX = profileEndX;
+  const upperProfileEndX = profileStartX + (upperProfileLength / 1000);
+  const lowerProfileEndX = profileStartX + (lowerProfileLength / 1000);
+
+  // Bottom right end cap sits at same X as upper right (at glass offset boundary)
+  // = profileStartX + (panelWidth - leftOffset - rightOffset) / 1000
+  const bottomRightCapX = upperProfileEndX;
 
   // Running unit: 86mm from top of glass module height (Ruby code)
   const runningUnitY = halfModH - (86 / 1000);
 
-  // Main lock: same Y as running unit, at right edge of panel
-  const mainLockX = halfPanelW;
-  const mainLockY = runningUnitY;
+  // Main lock: on LOWER rail, between profile end and end cap
+  // Profile ends → Lock → End cap (outermost)
+  const mainLockX = lowerProfileEndX;
+  const mainLockY = profileBottomY;
 
-  const leftCapPaths = END_CAP_GLB[endCapLeftType];
-  const rightCapPaths = END_CAP_GLB[endCapRightType];
+  // GLB paths from END_CAP_INFO
+  const leftCapGlb = END_CAP_INFO[endCapLeftType].glb;
+  const rightCapGlb = END_CAP_INFO[endCapRightType].glb;
 
   return (
     <group ref={groupRef}>
@@ -264,28 +277,29 @@ export function GlassPanel3D() {
       <GlassPane width={glassWidth} height={glassHeight} />
 
       {/* Glass holder profiles: origin at left edge, extruded in +X (red) */}
-      {profileLength > 0 && (
-        <>
-          <GlassHolderProfile
-            profileLength={profileLength}
-            positionX={profileStartX}
-            positionY={profileTopY}
-            partKey="profileTop"
-          />
-          <GlassHolderProfile
-            profileLength={profileLength}
-            positionX={profileStartX}
-            positionY={profileBottomY}
-            partKey="profileBottom"
-          />
-        </>
+      {upperProfileLength > 0 && (
+        <GlassHolderProfile
+          profileLength={upperProfileLength}
+          positionX={profileStartX}
+          positionY={profileTopY}
+          partKey="profileTop"
+        />
+      )}
+      {lowerProfileLength > 0 && (
+        <GlassHolderProfile
+          profileLength={lowerProfileLength}
+          positionX={profileStartX}
+          positionY={profileBottomY}
+          partKey="profileBottom"
+        />
       )}
 
-      {/* End caps — center-origo, placed at center of cap width */}
-      <EndCap glbPath={leftCapPaths.left} positionX={endCapLeftX} positionY={profileTopY} partKey="endCapTL" />
-      <EndCap glbPath={rightCapPaths.right} positionX={endCapRightX} positionY={profileTopY} partKey="endCapTR" />
-      <EndCap glbPath={leftCapPaths.left} positionX={endCapLeftX} positionY={profileBottomY} partKey="endCapBL" />
-      <EndCap glbPath={rightCapPaths.right} positionX={endCapRightX} positionY={profileBottomY} partKey="endCapBR" />
+      {/* End caps — at glass offset boundary (outermost) */}
+      <EndCap glbPath={leftCapGlb} positionX={endCapLeftX} positionY={profileTopY} partKey="endCapTL" />
+      <EndCap glbPath={rightCapGlb} positionX={upperProfileEndX} positionY={profileTopY} partKey="endCapTR" />
+      <EndCap glbPath={leftCapGlb} positionX={endCapLeftX} positionY={profileBottomY} partKey="endCapBL" />
+      {/* Bottom right: end cap sits OUTSIDE the lock (profile → lock → end cap) */}
+      <EndCap glbPath={rightCapGlb} positionX={bottomRightCapX} positionY={profileBottomY} partKey="endCapBR" />
 
       {/* Running unit (Löpenhet) — 86mm from top, centered */}
       <RunningUnit positionX={0} positionY={runningUnitY} />
@@ -299,10 +313,9 @@ export function GlassPanel3D() {
       <OriginCross position={[0, 0, 0]} />
       <OriginCross position={[profileStartX, profileTopY, 0]} />
       <OriginCross position={[profileStartX, profileBottomY, 0]} />
-      <OriginCross position={[endCapLeftX, profileTopY, 0]} />
-      <OriginCross position={[endCapRightX, profileTopY, 0]} />
-      <OriginCross position={[endCapLeftX, profileBottomY, 0]} />
-      <OriginCross position={[endCapRightX, profileBottomY, 0]} />
+      <OriginCross position={[upperProfileEndX, profileTopY, 0]} />
+      <OriginCross position={[lowerProfileEndX, profileBottomY, 0]} />
+      <OriginCross position={[bottomRightCapX, profileBottomY, 0]} />
       <OriginCross position={[0, runningUnitY, 0]} />
       {lockType !== 'none' && (
         <OriginCross position={[mainLockX, mainLockY, 0]} />
@@ -315,3 +328,13 @@ export function GlassPanel3D() {
 useGLTF.preload('/models/Glashållare_10mm.glb');
 useGLTF.preload('/models/Löpenhet.glb');
 useGLTF.preload('/models/Huvudlås.glb');
+
+// Preload all end cap GLBs
+const preloadedGlbs = new Set<string>();
+for (const type of END_CAP_TYPES) {
+  const glb = END_CAP_INFO[type].glb;
+  if (!preloadedGlbs.has(glb)) {
+    preloadedGlbs.add(glb);
+    useGLTF.preload(glb);
+  }
+}
