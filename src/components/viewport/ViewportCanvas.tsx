@@ -6,6 +6,7 @@ import { GroundPlane } from './GroundPlane';
 import { GuidelineDrawing } from './GuidelineDrawing';
 import { PointCloudViewer } from './PointCloudViewer';
 import { GuidePlanes3D } from './GuidePlanes3D';
+import { GlassPanels3D } from './GlassPanels3D';
 import { useConfigStore } from '../../store/useConfigStore';
 
 export function ViewportCanvas() {
@@ -34,6 +35,7 @@ export function ViewportCanvas() {
         <GuidelineDrawing />
         <PointCloudViewer />
         {showGuidePlanes && <GuidePlanes3D />}
+        <GlassPanels3D />
         <OrbitControls
           makeDefault
           enableDamping
