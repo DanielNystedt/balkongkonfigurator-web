@@ -228,18 +228,18 @@ function resizeSegmentToFitPanels(state: ConfigState, segIndex: number) {
   };
 }
 
-// ─── Helper: auto-generate panels for a single segment ──
-function autoGenForSegment(state: ConfigState, i: number) {
+// ─── Helper: regenerate panels for a segment (force) ──
+// Always regenerates even if panels already exist.
+function forceRegenSegment(state: ConfigState, i: number) {
   const pts = state.guidePoints;
   if (i < 0 || i >= pts.length - 1) return;
   const edge = state.edgeConfigs[i];
   if (!edge || edge.wallOrGlazingStatus === 'wall') return;
-  if (edge.panels.length > 0) return; // already has panels
 
   const s = pts[i];
   const e = pts[i + 1];
   const edgeLength = Math.sqrt((e.x - s.x) ** 2 + (e.y - s.y) ** 2);
-  if (edgeLength < 50) return; // too short
+  if (edgeLength < 50) return;
 
   let startAngle = 0;
   let endAngle = 0;
@@ -256,6 +256,17 @@ function autoGenForSegment(state: ConfigState, i: number) {
   }
 }
 
+// ─── Helper: regenerate ALL glazing segments ──
+// Changing one segment can cascade (wall status, angles, lock types)
+// so the safest approach is to regenerate every glazing segment.
+function regenAllGlazing(state: ConfigState, excludeIndex?: number) {
+  const segCount = state.guidePoints.length > 1 ? state.guidePoints.length - 1 : 0;
+  for (let i = 0; i < segCount; i++) {
+    if (i === excludeIndex) continue; // already handled by caller
+    forceRegenSegment(state, i);
+  }
+}
+
 // ─── Helper: ensure edgeConfigs array matches segment count ──
 function syncEdgeConfigs(state: ConfigState) {
   const segCount = state.guidePoints.length > 1 ? state.guidePoints.length - 1 : 0;
@@ -269,9 +280,10 @@ function syncEdgeConfigs(state: ConfigState) {
   if (state.selectedSegmentIndex !== null && state.selectedSegmentIndex >= segCount) {
     state.selectedSegmentIndex = segCount > 0 ? segCount - 1 : null;
   }
-  // Auto-generate panels for any edge that doesn't have them yet
+  // Regenerate panels for ALL glazing edges — angles, wall status,
+  // and lock types can cascade so every segment must stay in sync.
   for (let i = 0; i < segCount; i++) {
-    autoGenForSegment(state, i);
+    forceRegenSegment(state, i);
   }
 }
 
@@ -324,21 +336,8 @@ export const useConfigStore = create<ConfigState>()(
       set((state) => {
         if (index >= 0 && index < state.guidePoints.length) {
           state.guidePoints[index] = pt;
-          const segCount = state.guidePoints.length - 1;
-          if (index > 0 && index - 1 < segCount) {
-            const edge = state.edgeConfigs[index - 1];
-            if (edge && edge.wallOrGlazingStatus === 'glazing') {
-              edge.panels = [];
-              autoGenForSegment(state, index - 1);
-            }
-          }
-          if (index < segCount) {
-            const edge = state.edgeConfigs[index];
-            if (edge && edge.wallOrGlazingStatus === 'glazing') {
-              edge.panels = [];
-              autoGenForSegment(state, index);
-            }
-          }
+          // Moving a point changes angles — regenerate ALL glazing segments
+          regenAllGlazing(state);
         }
       }),
 
@@ -379,6 +378,7 @@ export const useConfigStore = create<ConfigState>()(
           x: s.x + dx * scale,
           y: s.y + dy * scale,
         };
+        regenAllGlazing(state);
       }),
 
     updateAngle: (vertexIndex, newAngle) =>
@@ -410,6 +410,7 @@ export const useConfigStore = create<ConfigState>()(
           x: curr.x + Math.cos(outAngle) * outLen,
           y: curr.y + Math.sin(outAngle) * outLen,
         };
+        regenAllGlazing(state);
       }),
 
     setPreviewPoint: (pt) =>
@@ -599,7 +600,13 @@ export const useConfigStore = create<ConfigState>()(
           state.edgeConfigs[segIndex].wallOrGlazingStatus = status;
           if (status === 'wall') {
             state.edgeConfigs[segIndex].panels = [];
+          } else {
+            // Switching to glazing — generate panels
+            forceRegenSegment(state, segIndex);
           }
+          // Neighbors need regen: wall/glazing status affects isConnectedToWall
+          // and therefore lock types / offsets on adjacent segments
+          regenAllGlazing(state, segIndex);
         }
       }),
 
@@ -651,38 +658,14 @@ export const useConfigStore = create<ConfigState>()(
     autoGeneratePanels: (segIndex) =>
       set((state) => {
         syncEdgeConfigs(state);
-        const pts = state.guidePoints;
-        if (segIndex < 0 || segIndex >= pts.length - 1) return;
-        const edge = state.edgeConfigs[segIndex];
-        if (!edge || edge.wallOrGlazingStatus === 'wall') return;
-
-        const start = pts[segIndex];
-        const end = pts[segIndex + 1];
-        const edgeLength = Math.sqrt(
-          (end.x - start.x) ** 2 + (end.y - start.y) ** 2,
-        );
-
-        // Calculate angles
-        let startAngle = 0;
-        let endAngle = 0;
-        if (segIndex > 0) {
-          startAngle = angleBetweenSegments(pts[segIndex - 1], pts[segIndex], pts[segIndex + 1]);
-        }
-        if (segIndex + 2 < pts.length) {
-          endAngle = angleBetweenSegments(pts[segIndex], pts[segIndex + 1], pts[segIndex + 2]);
-        }
-
-        // Wall connections
-        const startWall = isConnectedToWall(state.edgeConfigs, segIndex, 'start');
-        const endWall = isConnectedToWall(state.edgeConfigs, segIndex, 'end');
-
-        // Use free or standard widths depending on toggle
-        if (state.freeGlassWidth) {
-          edge.panels = evenDistributePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
-        } else {
-          edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+        // Regenerate this segment
+        forceRegenSegment(state, segIndex);
+        // In standard mode, resize segment geometry to match panel module length
+        if (!state.freeGlassWidth) {
           resizeSegmentToFitPanels(state, segIndex);
         }
+        // Regenerate neighbors — their lock types / offsets depend on this segment
+        regenAllGlazing(state, segIndex);
       }),
 
     // ─── Computed edge data ─────────────────────────────────────
