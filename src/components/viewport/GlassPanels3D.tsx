@@ -254,6 +254,14 @@ function RealPanelAssembly({
   const leftCapType = lockTypeToEndCapLeft(fitting.topLeft);
   const rightCapType = lockTypeToEndCapRight(fitting.topRight);
 
+  // Top rail: upper profile is flipped, so only the RIGHT end cap swaps L↔R
+  const topLeftCapType = leftCapType;
+  const topRightCapType = lockTypeToEndCapLeft(fitting.topRight);
+
+  // Bottom rail: the LEFT end cap at meeting points is swapped R→L
+  const bottomLeftCapType = lockTypeToEndCapRight(fitting.topLeft);
+  const bottomRightCapType = rightCapType;
+
   const leftOffset = DEFAULT_GLASS_OFFSET[leftCapType];
   const rightOffset = DEFAULT_GLASS_OFFSET[rightCapType];
   const lockDeduction = hasLock ? DEFAULT_BOTTOM_LOCK_WIDTH.single : 0;
@@ -276,8 +284,10 @@ function RealPanelAssembly({
   const bottomRightCapX = upperProfileEndX;
 
   // GLB paths
-  const leftCapGlb = END_CAP_INFO[leftCapType].glb;
-  const rightCapGlb = END_CAP_INFO[rightCapType].glb;
+  const topLeftCapGlb = END_CAP_INFO[topLeftCapType].glb;
+  const topRightCapGlb = END_CAP_INFO[topRightCapType].glb;
+  const bottomLeftCapGlb = END_CAP_INFO[bottomLeftCapType].glb;
+  const bottomRightCapGlb = END_CAP_INFO[bottomRightCapType].glb;
 
   return (
     <group>
@@ -304,13 +314,13 @@ function RealPanelAssembly({
         />
       )}
 
-      {/* End caps — top rail (swapped L/R because upper profile is flipped) */}
-      <EndCap glbPath={rightCapGlb} positionX={profileStartX} positionY={profileTopY} rotation={PART_ROT.endCapTL} />
-      <EndCap glbPath={leftCapGlb} positionX={upperProfileEndX} positionY={profileTopY} rotation={PART_ROT.endCapTR} />
+      {/* End caps — top rail (L↔R swapped because upper profile is flipped) */}
+      <EndCap glbPath={topLeftCapGlb} positionX={profileStartX} positionY={profileTopY} rotation={PART_ROT.endCapTL} />
+      <EndCap glbPath={topRightCapGlb} positionX={upperProfileEndX} positionY={profileTopY} rotation={PART_ROT.endCapTR} />
 
-      {/* End caps — bottom rail */}
-      <EndCap glbPath={leftCapGlb} positionX={profileStartX} positionY={profileBottomY} rotation={PART_ROT.endCapBL} />
-      <EndCap glbPath={rightCapGlb} positionX={bottomRightCapX} positionY={profileBottomY} rotation={PART_ROT.endCapBR} />
+      {/* End caps — bottom rail (LEFT swapped R→L at meeting points) */}
+      <EndCap glbPath={bottomLeftCapGlb} positionX={profileStartX} positionY={profileBottomY} rotation={PART_ROT.endCapBL} />
+      <EndCap glbPath={bottomRightCapGlb} positionX={bottomRightCapX} positionY={profileBottomY} rotation={PART_ROT.endCapBR} />
 
       {/* Main lock — lower rail, between profile end and end cap */}
       {hasLock && (
