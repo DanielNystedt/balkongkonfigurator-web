@@ -86,6 +86,12 @@ const PART_ROT = {
   mainLock:      [0 * H, 1 * H, 0 * H] as [number, number, number],
 };
 
+// ─── Constants ──────────────────────────────────────────────────
+// Glass panels are placed 62.5mm perpendicular inward from the guideline
+// (to the RIGHT side of the travel direction, matching SketchUp's
+// direction.cross(Z_AXIS) which gives [dy, -dx] in 2D).
+const PANEL_PERP_OFFSET_M = 62.5 / 1000; // 62.5mm in meters
+
 // ─── Helpers ────────────────────────────────────────────────────
 function toThreeXZ(p: Point2D): [number, number] {
   return [p.x / 1000, -p.y / 1000];
@@ -298,9 +304,9 @@ function RealPanelAssembly({
         />
       )}
 
-      {/* End caps — top rail */}
-      <EndCap glbPath={leftCapGlb} positionX={profileStartX} positionY={profileTopY} rotation={PART_ROT.endCapTL} />
-      <EndCap glbPath={rightCapGlb} positionX={upperProfileEndX} positionY={profileTopY} rotation={PART_ROT.endCapTR} />
+      {/* End caps — top rail (swapped L/R because upper profile is flipped) */}
+      <EndCap glbPath={rightCapGlb} positionX={profileStartX} positionY={profileTopY} rotation={PART_ROT.endCapTL} />
+      <EndCap glbPath={leftCapGlb} positionX={upperProfileEndX} positionY={profileTopY} rotation={PART_ROT.endCapTR} />
 
       {/* End caps — bottom rail */}
       <EndCap glbPath={leftCapGlb} positionX={profileStartX} positionY={profileBottomY} rotation={PART_ROT.endCapBL} />
@@ -342,6 +348,9 @@ export function GlassPanels3D() {
       const end = guidePoints[segIdx + 1];
 
       const positionedPanels: PositionedPanel[] = [];
+
+      // Panels use their exact stored widths — no spelGuide distribution.
+      // (In SketchUp the edge is resized to totalModuleLength instead.)
       let cursor = 0;
 
       for (let pIdx = 0; pIdx < edge.panels.length; pIdx++) {
@@ -398,10 +407,23 @@ export function GlassPanels3D() {
     const dirZ = segDz / segLen;
     const yRotation = -Math.atan2(dirZ, dirX);
 
+    // Perpendicular to the RIGHT of travel direction (= inward side).
+    // In 2D mm: perp = [dy, -dx]. After toThreeXZ mapping (x→X, y→-Z):
+    // Three.js perp right = [-dirZ, dirX] but our Z is already negated,
+    // so right-hand perp in Three.js XZ plane = (dirZ, -dirX)...
+    // Let's derive properly:
+    //   2D segment dir: (dx2d, dy2d)
+    //   2D perp right (SketchUp cross Z): (dy2d, -dx2d)
+    //   toThreeXZ: x→x/1000, y→-y/1000
+    //   Three.js dir: (dx2d/L/1000, dy2d/L/1000 negated by toThreeXZ → dirZ already has sign)
+    //   We just need perpX = -dirZ, perpZ = dirX (rotate dir 90° CW in XZ plane)
+    const perpX = -dirZ;
+    const perpZ = dirX;
+
     return seg.panels.map((panel) => {
       const t = panel.centerAlongSegment / 1000;
-      const posX = startX + dirX * t;
-      const posZ = startZ + dirZ * t;
+      const posX = startX + dirX * t + perpX * PANEL_PERP_OFFSET_M;
+      const posZ = startZ + dirZ * t + perpZ * PANEL_PERP_OFFSET_M;
 
       return {
         key: `seg${seg.segIndex}-p${panel.index}`,

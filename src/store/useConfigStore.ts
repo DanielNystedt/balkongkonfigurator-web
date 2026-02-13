@@ -21,6 +21,7 @@ import { angleBetweenSegments, calculateOffsetPoints } from '../engine/geometry/
 import {
   computeEdgeData,
   autoGeneratePanelsForEdge,
+  evenDistributePanelsForEdge,
   recalcPanelOffsets,
   isConnectedToWall,
   type ComputedEdgeData,
@@ -104,6 +105,10 @@ interface ConfigState {
   isDrawing: boolean;
   snapEnabled: boolean;
   snapAngle: boolean;
+
+  /** Fritt glasmått — equal free-width panels instead of 30mm-step standard sizes */
+  freeGlassWidth: boolean;
+  toggleFreeGlassWidth: () => void;
 
   // Guideline actions
   addPoint: (pt: Point2D) => void;
@@ -244,7 +249,11 @@ function autoGenForSegment(state: ConfigState, i: number) {
   const startWall = isConnectedToWall(state.edgeConfigs, i, 'start');
   const endWall = isConnectedToWall(state.edgeConfigs, i, 'end');
 
-  edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+  if (state.freeGlassWidth) {
+    edge.panels = evenDistributePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+  } else {
+    edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+  }
 }
 
 // ─── Helper: ensure edgeConfigs array matches segment count ──
@@ -299,6 +308,7 @@ export const useConfigStore = create<ConfigState>()(
     isDrawing: false,
     snapEnabled: true,
     snapAngle: true,
+    freeGlassWidth: true,
 
     addPoint: (pt) =>
       set((state) => {
@@ -449,6 +459,43 @@ export const useConfigStore = create<ConfigState>()(
     toggleSnapAngle: () =>
       set((state) => {
         state.snapAngle = !state.snapAngle;
+      }),
+
+    toggleFreeGlassWidth: () =>
+      set((state) => {
+        state.freeGlassWidth = !state.freeGlassWidth;
+
+        // Re-generate all glazing panels with the new mode
+        const pts = state.guidePoints;
+        const segCount = pts.length - 1;
+        if (segCount < 1) return;
+
+        syncEdgeConfigs(state);
+
+        for (let i = 0; i < segCount; i++) {
+          const edge = state.edgeConfigs[i];
+          if (!edge || edge.wallOrGlazingStatus === 'wall') continue;
+
+          const s = pts[i];
+          const e = pts[i + 1];
+          const edgeLength = Math.sqrt((e.x - s.x) ** 2 + (e.y - s.y) ** 2);
+          if (edgeLength < 50) continue;
+
+          let startAngle = 0;
+          let endAngle = 0;
+          if (i > 0) startAngle = angleBetweenSegments(pts[i - 1], pts[i], pts[i + 1]);
+          if (i + 2 < pts.length) endAngle = angleBetweenSegments(pts[i], pts[i + 1], pts[i + 2]);
+
+          const startWall = isConnectedToWall(state.edgeConfigs, i, 'start');
+          const endWall = isConnectedToWall(state.edgeConfigs, i, 'end');
+
+          if (state.freeGlassWidth) {
+            edge.panels = evenDistributePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+          } else {
+            edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+            resizeSegmentToFitPanels(state, i);
+          }
+        }
       }),
 
     // Computed
@@ -629,15 +676,13 @@ export const useConfigStore = create<ConfigState>()(
         const startWall = isConnectedToWall(state.edgeConfigs, segIndex, 'start');
         const endWall = isConnectedToWall(state.edgeConfigs, segIndex, 'end');
 
-        // Use real auto-generation logic
-        edge.panels = autoGeneratePanelsForEdge(
-          edgeLength,
-          startAngle,
-          endAngle,
-          startWall,
-          endWall,
-        );
-        resizeSegmentToFitPanels(state, segIndex);
+        // Use free or standard widths depending on toggle
+        if (state.freeGlassWidth) {
+          edge.panels = evenDistributePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+        } else {
+          edge.panels = autoGeneratePanelsForEdge(edgeLength, startAngle, endAngle, startWall, endWall);
+          resizeSegmentToFitPanels(state, segIndex);
+        }
       }),
 
     // ─── Computed edge data ─────────────────────────────────────
@@ -656,7 +701,7 @@ export const useConfigStore = create<ConfigState>()(
     },
 
     // ─── Point cloud ──────────────────────────────────────────
-    pointCloudEnabled: true,
+    pointCloudEnabled: false,
     setPointCloudEnabled: (v) =>
       set((state) => { state.pointCloudEnabled = v; }),
     pointCloudClipY: 2.0,

@@ -29,6 +29,8 @@ export function ConfigPanel() {
   const toggleSnap = useConfigStore((s) => s.toggleSnap);
   const snapAngle = useConfigStore((s) => s.snapAngle);
   const toggleSnapAngle = useConfigStore((s) => s.toggleSnapAngle);
+  const freeGlassWidth = useConfigStore((s) => s.freeGlassWidth);
+  const toggleFreeGlassWidth = useConfigStore((s) => s.toggleFreeGlassWidth);
 
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -117,6 +119,20 @@ export function ConfigPanel() {
         <div className="control">
           <label>Rutstorlek <span className="value">100 mm</span></label>
           <input type="range" min={50} max={500} step={50} defaultValue={100} />
+        </div>
+      </div>
+
+      {/* Glasmått */}
+      <div className="section">
+        <div className="section-title">Glasmått</div>
+        <div className="checkbox-row">
+          <input type="checkbox" checked={freeGlassWidth} onChange={toggleFreeGlassWidth} />
+          <label>Fritt glasmått</label>
+        </div>
+        <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+          {freeGlassWidth
+            ? 'Paneler fördelas jämnt med fritt mått (max 700mm)'
+            : 'Paneler använder standardmått (430–700mm i steg om 30mm)'}
         </div>
       </div>
 

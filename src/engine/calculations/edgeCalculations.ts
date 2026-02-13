@@ -169,6 +169,48 @@ export function calculateCutLengths(
   return { underskena, overskena, overhallare, coverprofile };
 }
 
+// ─── Even distribution (free widths, no 30mm snapping) ───────
+// Splits available length into equal panels (max MAX_PANEL_WIDTH each).
+
+export function evenDistributePanelsForEdge(
+  edgeLength: number,
+  startAngle: number,
+  endAngle: number,
+  startConnectedToWall: boolean,
+  endConnectedToWall: boolean,
+): Panel[] {
+  const leftResult = calculateOffset(startAngle, startConnectedToWall);
+  const rightResult = calculateOffset(endAngle, endConnectedToWall);
+  const leftOffset = leftResult.offset;
+  const rightOffset = rightResult.offset;
+
+  const availableLength = edgeLength - leftOffset - rightOffset;
+  if (availableLength <= 0) {
+    // No room for panels at all
+    return [];
+  }
+
+  // Split into equal panels, max 700mm each. No minimum width rule.
+  const numPanels = Math.max(1, Math.ceil(availableLength / MAX_PANEL_WIDTH));
+  const betweenPanelOffsets = (numPanels - 1) * MIDDLE_PANEL_OFFSET * 2;
+  const availableForGlass = availableLength - betweenPanelOffsets;
+  const panelWidth = Math.round((availableForGlass / numPanels) * 10) / 10;
+
+  const panels: Panel[] = [];
+  for (let i = 0; i < numPanels; i++) {
+    panels.push({
+      name: `${i + 1}`,
+      length: panelWidth,
+      opening: '>' as OpeningDirection,
+      lock: '-' as LockSymbol,
+      offsetLeft: i === 0 ? Math.round(leftOffset * 10) / 10 : MIDDLE_PANEL_OFFSET,
+      offsetRight: i === numPanels - 1 ? Math.round(rightOffset * 10) / 10 : MIDDLE_PANEL_OFFSET,
+    });
+  }
+  autoAssignLocks(panels);
+  return panels;
+}
+
 // ─── Panel auto-generation ───────────────────────────────────
 // Smart algorithm ported from 275_Multi_Guide_HTML.rb lines 898-1094
 // Uses standard sizes (430-700 in steps of 30) and mixes two sizes for best fit.
